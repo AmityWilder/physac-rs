@@ -1,0 +1,13 @@
+[package]
+name = "physac-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+raylib = { version = "*", optional = true }
+
+[features]
+default = []
+raylib = ["dep:raylib"]
+no_threads = []
+debug = []
