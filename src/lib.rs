@@ -87,10 +87,11 @@ pub struct Vector2 {
     pub y: f32,
 }
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg(not(feature = "no_threads"))]
 use std::{
+    time::Duration,
     sync::{Arc, Weak, RwLock, RwLockReadGuard, RwLockWriteGuard},
     thread,
 };
@@ -546,6 +547,151 @@ pub fn init_physics() -> PhysacHandle {
     ph
 }
 
+impl PhysacHandle {
+    /// Returns true if physics thread is currently enabled
+    #[inline]
+    pub fn is_physics_enabled(&self) -> bool {
+        #[cfg(not(feature = "no_threads"))]
+        let phys = self.0.read().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &self.0;
+        phys.is_physics_enabled()
+    }
+
+    /// Sets physics global gravity force
+    #[inline]
+    pub fn set_physics_gravity(&mut self, x: f32, y: f32) {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.set_physics_gravity(x, y)
+    }
+
+    /// Creates a new circle physics body with generic parameters
+    #[inline]
+    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.create_physics_body_circle(pos, radius, density)
+    }
+
+    /// Creates a new rectangle physics body with generic parameters
+    #[inline]
+    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.create_physics_body_rectangle(pos, width, height, density)
+    }
+
+    /// Creates a new polygon physics body with generic parameters
+    #[inline]
+    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: u32, density: f32) -> PhysicsBody {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.create_physics_body_polygon(pos, radius, sides, density)
+    }
+
+    /// Shatters a polygon shape physics body to little physics bodies with explosion force
+    #[inline]
+    pub fn physics_shatter(&mut self, body: &PhysicsBody, position: Vector2, force: f32) {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.physics_shatter(body, position, force)
+    }
+
+    /// Returns the current amount of created physics bodies
+    #[inline]
+    pub fn get_physics_bodies_count(&self) -> u32 {
+        #[cfg(not(feature = "no_threads"))]
+        let phys = self.0.read().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &self.0;
+        phys.get_physics_bodies_count()
+    }
+
+    /// Returns a physics body of the bodies pool at a specific index
+    ///
+    /// # Panics
+    ///
+    /// May panic if the index is out of bounds.
+    #[inline]
+    pub fn get_physics_body(&self, index: u32) -> Option<PhysicsBody> {
+        #[cfg(not(feature = "no_threads"))]
+        let phys = self.0.read().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &self.0;
+        phys.get_physics_body(index)
+    }
+
+    /// Returns the physics body shape type (PHYSICS_CIRCLE or PHYSICS_POLYGON)
+    ///
+    /// # Panics
+    ///
+    /// May panic if the index is out of bounds.
+    #[inline]
+    pub fn get_physics_shape_type(&self, index: u32) -> Option<PhysicsShapeType> {
+        #[cfg(not(feature = "no_threads"))]
+        let phys = self.0.read().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &self.0;
+        phys.get_physics_shape_type(index)
+    }
+
+    /// Returns the amount of vertices of a physics body shape
+    #[inline]
+    pub fn get_physics_shape_vertices_count(&self, index: u32) -> u32 {
+        #[cfg(not(feature = "no_threads"))]
+        let phys = self.0.read().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &self.0;
+        phys.get_physics_shape_vertices_count(index)
+    }
+
+    /// Unitializes and destroys a physics body
+    #[inline]
+    pub fn destroy_physics_body(&mut self, body: PhysicsBody) {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.destroy_physics_body(body)
+    }
+
+    /// Unitializes physics pointers and exits physics loop thread
+    #[inline]
+    pub fn close_physics(self) {
+        drop(self)
+    }
+
+    /// Wrapper to ensure PhysicsStep is run with at a fixed time step
+    #[inline]
+    pub fn run_physics_step(&mut self) {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.run_physics_step()
+    }
+
+    #[inline]
+    pub fn set_physics_time_step(&mut self, delta: f64) {
+        #[cfg(not(feature = "no_threads"))]
+        let mut phys = self.0.write().unwrap();
+        #[cfg(feature = "no_threads")]
+        let phys = &mut self.0;
+        phys.set_physics_time_step(delta)
+    }
+}
+
 impl Physac {
     /// Returns true if physics thread is currently enabled
     pub fn is_physics_enabled(&self) -> bool {
@@ -557,9 +703,7 @@ impl Physac {
         self.gravity_force.x = x;
         self.gravity_force.y = y;
     }
-}
 
-impl Physac {
     /// Creates a new circle physics body with generic parameters
     pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody {
         let mut new_weak_body = PhysicsBody::new();
@@ -850,7 +994,7 @@ impl Physac {
 
                     // Destroy shattered physics body
                     drop(body);
-                    self.destroy_physics_body(phys_body);
+                    self.destroy_physics_body(phys_body.downgrade());
 
                     for i in 0..count {
                         let next_index = if (i + 1) < count { i + 1 } else { 0 };
@@ -1061,48 +1205,44 @@ impl PhysicsBody {
 
 impl Physac {
     /// Unitializes and destroys a physics body
-    pub fn destroy_physics_body(&mut self, body: StrongPhysicsBody) {
-        let id = body.borrow().id;
-        let mut index = None;
-
-        for i in 0..self.physics_bodies_count {
-            let body = self.bodies[i as usize].as_ref().unwrap();
-            if body.borrow().id == id {
-                index = Some(i);
-                break;
-            }
-        }
-
-        if index.is_none() {
-            if cfg!(feature = "debug") {
-                println!("[PHYSAC] Not possible to find body id {} in pointers array", id);
-            }
-            return;
-        }
-        let index = index.unwrap();
-
-        // Free body allocated memory
-        drop(body);
-        self.bodies[index as usize] = None;
-
-        // Reorder physics bodies pointers array and its catched index
-        for i in index..self.physics_bodies_count {
-            if let ([.., curr], [next, ..]) = self.bodies.split_at_mut(i as usize) {
-                std::mem::swap(curr, next);
-            }
-        }
-
-        // Update physics bodies count
-        self.physics_bodies_count -= 1;
-
-        if cfg!(feature = "debug") {
-            println!("[PHYSAC] destroyed physics body id {}", id);
-        }
-    }
-
-    pub fn destroy(&mut self, body: PhysicsBody) {
+    pub fn destroy_physics_body(&mut self, body: PhysicsBody) {
         if let Some(body) = body.upgrade() {
-            self.destroy_physics_body(body);
+            let id = body.borrow().id;
+            let mut index = None;
+
+            for i in 0..self.physics_bodies_count {
+                let body = self.bodies[i as usize].as_ref().unwrap();
+                if body.borrow().id == id {
+                    index = Some(i);
+                    break;
+                }
+            }
+
+            if index.is_none() {
+                if cfg!(feature = "debug") {
+                    println!("[PHYSAC] Not possible to find body id {} in pointers array", id);
+                }
+                return;
+            }
+            let index = index.unwrap();
+
+            // Free body allocated memory
+            drop(body);
+            self.bodies[index as usize] = None;
+
+            // Reorder physics bodies pointers array and its catched index
+            for i in index..self.physics_bodies_count {
+                if let ([.., curr], [next, ..]) = self.bodies.split_at_mut(i as usize) {
+                    std::mem::swap(curr, next);
+                }
+            }
+
+            // Update physics bodies count
+            self.physics_bodies_count -= 1;
+
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] destroyed physics body id {}", id);
+            }
         } else if cfg!(feature = "debug") {
             println!("[PHYSAC] error trying to destroy a null referenced body");
         }
@@ -1125,7 +1265,7 @@ impl Physac {
 
         // Unitialize physics bodies dynamic memory allocations
         for i in (0..self.physics_bodies_count).rev() {
-            let body = self.bodies[i as usize].as_ref().cloned().unwrap();
+            let body = self.bodies[i as usize].as_ref().unwrap().downgrade();
             self.destroy_physics_body(body);
         }
 
