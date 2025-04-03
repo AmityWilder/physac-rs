@@ -87,6 +87,20 @@ pub struct Vector2 {
     pub y: f32,
 }
 
+use std::time::{Duration, Instant};
+
+#[cfg(not(feature = "no_threads"))]
+use std::{
+    sync::{Arc, Weak, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    thread,
+};
+
+#[cfg(feature = "no_threads")]
+use std::{
+    rc::{Rc, Weak},
+    cell::{RefCell, Ref, RefMut},
+};
+
 //----------------------------------------------------------------------------------
 // Defines and Macros
 //----------------------------------------------------------------------------------
@@ -100,6 +114,9 @@ pub const PHYSAC_COLLISION_ITERATIONS:   u32 = 20;
 pub const PHYSAC_PENETRATION_ALLOWANCE:  f32 = 0.05;
 pub const PHYSAC_PENETRATION_CORRECTION: f32 = 0.4;
 
+use std::f32::consts::PI;
+pub const DEG2RAD: f32 = PI/180.0;
+
 //----------------------------------------------------------------------------------
 // Types and Structures Definition
 //----------------------------------------------------------------------------------
@@ -109,8 +126,6 @@ pub enum PhysicsShapeType {
     Circle,
     Polygon,
 }
-use std::f32::consts::PI;
-pub const DEG2RAD: f32 = PI/180.0;
 pub use PhysicsShapeType::{
     Circle as PHYSICS_CIRCLE,
     Polygon as PHYSICS_POLYGON,
@@ -253,7 +268,12 @@ pub struct PhysicsManifoldData {
 pub mod rc {
     use super::*;
 
-    pub struct PhysacReadGuard<'a, T>(std::sync::RwLockReadGuard<'a, T>);
+    pub struct PhysacReadGuard<'a, T>(
+        #[cfg(not(feature = "no_threads"))]
+        RwLockReadGuard<'a, T>,
+        #[cfg(feature = "no_threads")]
+        Ref<'a, T>,
+    );
     impl<T> std::ops::Deref for PhysacReadGuard<'_, T> {
         type Target = T;
 
@@ -262,7 +282,12 @@ pub mod rc {
         }
     }
 
-    pub struct PhysacWriteGuard<'a, T>(std::sync::RwLockWriteGuard<'a, T>);
+    pub struct PhysacWriteGuard<'a, T>(
+        #[cfg(not(feature = "no_threads"))]
+        RwLockWriteGuard<'a, T>,
+        #[cfg(feature = "no_threads")]
+        RefMut<'a, T>,
+    );
     impl<T> std::ops::Deref for PhysacWriteGuard<'_, T> {
         type Target = T;
 
@@ -277,31 +302,61 @@ pub mod rc {
     }
 
     #[derive(Debug, Clone)]
-    pub struct StrongPhysicsBody(Arc<RwLock<PhysicsBodyData>>);
+    pub struct StrongPhysicsBody(
+        #[cfg(not(feature = "no_threads"))]
+        Arc<RwLock<PhysicsBodyData>>,
+        #[cfg(feature = "no_threads")]
+        Rc<RefCell<PhysicsBodyData>>,
+    );
     impl StrongPhysicsBody {
         pub(super) fn new(data: PhysicsBodyData) -> Self {
-            Self(Arc::new(RwLock::new(data)))
+            Self(
+                #[cfg(not(feature = "no_threads"))]
+                Arc::new(RwLock::new(data)),
+                #[cfg(feature = "no_threads")]
+                Rc::new(RefCell::new(data)),
+            )
         }
 
         /// Get a weak body from a strong one
         pub fn downgrade(&self) -> PhysicsBody {
-            PhysicsBody(Arc::downgrade(&self.0))
+            PhysicsBody(
+                #[cfg(not(feature = "no_threads"))]
+                Arc::downgrade(&self.0),
+                #[cfg(feature = "no_threads")]
+                Rc::downgrade(&self.0),
+            )
         }
 
         /// Get a temporary reference to the body
         pub fn borrow(&self) -> PhysacReadGuard<'_, PhysicsBodyData> {
-            PhysacReadGuard(self.0.read().unwrap())
+            PhysacReadGuard(
+                #[cfg(not(feature = "no_threads"))]
+                self.0.read().unwrap(),
+                #[cfg(feature = "no_threads")]
+                self.0.borrow(),
+            )
         }
 
         /// Get a temporary mutable reference to the body
         pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, PhysicsBodyData> {
-            PhysacWriteGuard(self.0.write().unwrap())
+            PhysacWriteGuard(
+                #[cfg(not(feature = "no_threads"))]
+                self.0.write().unwrap(),
+                #[cfg(feature = "no_threads")]
+                self.0.borrow_mut(),
+            )
         }
     }
 
     /// Previously defined to be used in PhysicsShape struct as circular dependencies
     #[derive(Debug, Clone, Default)]
-    pub struct PhysicsBody(Weak<RwLock<PhysicsBodyData>>);
+    pub struct PhysicsBody(
+        #[cfg(not(feature = "no_threads"))]
+        Weak<RwLock<PhysicsBodyData>>,
+        #[cfg(feature = "no_threads")]
+        Weak<RefCell<PhysicsBodyData>>,
+    );
     impl PhysicsBody {
         /// Constructs a weak body with no reference
         pub fn new() -> Self {
@@ -315,30 +370,60 @@ pub mod rc {
     }
 
     #[derive(Debug, Clone)]
-    pub struct StrongPhysicsManifold(Arc<RwLock<PhysicsManifoldData>>);
+    pub struct StrongPhysicsManifold(
+        #[cfg(not(feature = "no_threads"))]
+        Arc<RwLock<PhysicsManifoldData>>,
+        #[cfg(feature = "no_threads")]
+        Rc<RefCell<PhysicsManifoldData>>,
+    );
     impl StrongPhysicsManifold {
         pub(super) fn new(data: PhysicsManifoldData) -> Self {
-            Self(Arc::new(RwLock::new(data)))
+            Self(
+                #[cfg(not(feature = "no_threads"))]
+                Arc::new(RwLock::new(data)),
+                #[cfg(feature = "no_threads")]
+                Rc::new(RefCell::new(data)),
+            )
         }
 
         /// Get a weak manifold from a strong one
         pub fn downgrade(&self) -> PhysicsManifold {
-            PhysicsManifold(Arc::downgrade(&self.0))
+            PhysicsManifold(
+                #[cfg(not(feature = "no_threads"))]
+                Arc::downgrade(&self.0),
+                #[cfg(feature = "no_threads")]
+                Rc::downgrade(&self.0),
+            )
         }
 
         /// Get a temporary reference to the manifold
         pub fn borrow(&self) -> PhysacReadGuard<'_, PhysicsManifoldData> {
-            PhysacReadGuard(self.0.read().unwrap())
+            PhysacReadGuard(
+                #[cfg(not(feature = "no_threads"))]
+                self.0.read().unwrap(),
+                #[cfg(feature = "no_threads")]
+                self.0.borrow(),
+            )
         }
 
         /// Get a temporary mutable reference to the manifold
         pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, PhysicsManifoldData> {
-            PhysacWriteGuard(self.0.write().unwrap())
+            PhysacWriteGuard(
+                #[cfg(not(feature = "no_threads"))]
+                self.0.write().unwrap(),
+                #[cfg(feature = "no_threads")]
+                self.0.borrow_mut(),
+            )
         }
     }
 
     #[derive(Debug, Clone, Default)]
-    pub struct PhysicsManifold(Weak<RwLock<PhysicsManifoldData>>);
+    pub struct PhysicsManifold(
+        #[cfg(not(feature = "no_threads"))]
+        Weak<RwLock<PhysicsManifoldData>>,
+        #[cfg(feature = "no_threads")]
+        Weak<RefCell<PhysicsManifoldData>>,
+    );
     impl PhysicsManifold {
         /// Constructs a weak manifold with no reference
         pub fn new() -> Self {
@@ -359,17 +444,6 @@ pub use self::rc::*;
 *
 ************************************************************************************/
 
-use std::{
-    sync::{
-        atomic::{
-            AtomicBool, AtomicU32, Ordering::Relaxed
-        }, Arc, LazyLock, OnceLock, RwLock, Weak
-    },
-    time::{Duration, Instant},
-};
-// #[cfg(not(feature = "no_threads"))]
-// use std::thread;
-
 //----------------------------------------------------------------------------------
 // Defines and Macros
 //----------------------------------------------------------------------------------
@@ -378,80 +452,120 @@ pub const PHYSAC_K: f32 = 1.0/3.0;
 //----------------------------------------------------------------------------------
 // Global Variables Definition
 //----------------------------------------------------------------------------------
-// #[cfg(not(feature = "no_threads"))]
-// /// Physics thread id
-// static pthread_t physicsThreadId;
+pub struct Physac {
+    #[cfg(not(feature = "no_threads"))]
+    /// Physics thread
+    physics_thread: Option<thread::JoinHandle<()>>,
 
-/// Physics thread enabled state
-static PHYSICS_THREAD_ENABLED: AtomicBool = AtomicBool::new(false);
-/// Offset time for MONOTONIC clock
-static BASE_TIME: OnceLock<Instant> = OnceLock::new();
-/// Start time in milliseconds
-static mut START_TIME: f64 = 0.0;
-/// Delta time used for physics steps, in milliseconds
-static mut DELTA_TIME: f64 = 1.0/60.0/10.0 * 1000.0;
-/// Current time in milliseconds
-static mut CURRENT_TIME: f64 = 0.0;
+    /// Physics thread enabled state
+    physics_thread_enabled: bool,
+    /// Offset time for MONOTONIC clock
+    base_time: Instant,
+    /// Start time in milliseconds
+    start_time: f64,
+    /// Delta time used for physics steps, in milliseconds
+    delta_time: f64,
+    /// Current time in milliseconds
+    current_time: f64,
 
-/// Physics time step delta time accumulator
-static mut ACCUMULATOR: f64 = 0.0;
-/// Total physics steps processed
-static STEPS_COUNT: AtomicU32 = AtomicU32::new(0);
-/// Physics world gravity force
-static mut GRAVITY_FORCE: Vector2 = Vector2 { x: 0.0, y: 9.81 };
-/// Physics bodies pointers array
-static BODIES: LazyLock<Arc<RwLock<[Option<StrongPhysicsBody>; PHYSAC_MAX_BODIES as usize]>>>
-    = LazyLock::new(|| Arc::new(RwLock::new([const { None }; PHYSAC_MAX_BODIES as usize])));
-/// Physics world current bodies counter
-static PHYSICS_BODIES_COUNT: AtomicU32 = AtomicU32::new(0);
-/// Physics bodies pointers array
-static CONTACTS: LazyLock<Arc<RwLock<[Option<StrongPhysicsManifold>; PHYSAC_MAX_MANIFOLDS as usize]>>>
-    = LazyLock::new(|| Arc::new(RwLock::new([const { None }; PHYSAC_MAX_MANIFOLDS as usize])));
-/// Physics world current manifolds counter
-static PHYSICS_MANIFOLDS_COUNT: AtomicU32 = AtomicU32::new(0);
+    /// Physics time step delta time accumulator
+    accumulator: f64,
+    /// Total physics steps processed
+    steps_count: u32,
+    /// Physics world gravity force
+    gravity_force: Vector2,
+    /// Physics bodies pointers array
+    bodies: [Option<StrongPhysicsBody>; PHYSAC_MAX_BODIES as usize],
+    /// Physics world current bodies counter
+    physics_bodies_count: u32,
+    /// Physics bodies pointers array
+    contacts: [Option<StrongPhysicsManifold>; PHYSAC_MAX_MANIFOLDS as usize],
+    /// Physics world current manifolds counter
+    physics_manifolds_count: u32,
+}
+
+pub struct PhysacHandle(
+    #[cfg(not(feature = "no_threads"))]
+    Arc<RwLock<Physac>>,
+    #[cfg(feature = "no_threads")]
+    Physac,
+);
+impl Drop for PhysacHandle {
+    fn drop(&mut self) {
+        #[cfg(not(feature = "no_threads"))]
+        self.0.write().unwrap().close_physics();
+        #[cfg(feature = "no_threads")]
+        self.0.close_physics();
+    }
+}
 
 //----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
 /// Initializes physics values, pointers and creates physics loop thread
-pub fn init_physics() {
-    // #[cfg(not(feature = "no_threads"))]
-    // // NOTE: if defined, user will need to create a thread for PhysicsThread function manually
-    // // Create physics thread using POSIXS thread libraries
-    // pthread_create(&physicsThreadId, NULL, &PhysicsLoop, NULL);
+pub fn init_physics() -> PhysacHandle {
+    let mut phys = Physac {
+        #[cfg(not(feature = "no_threads"))]
+        physics_thread: None,
+        physics_thread_enabled: false,
+        base_time: Instant::now(),
+        start_time: 0.0,
+        delta_time: 1.0/60.0/10.0 * 1000.0,
+        current_time: 0.0,
+        accumulator: 0.0,
+        steps_count: 0,
+        gravity_force: Vector2 { x: 0.0, y: 9.81 },
+        bodies: [const { None }; PHYSAC_MAX_BODIES as usize],
+        physics_bodies_count: 0,
+        contacts: [const { None }; PHYSAC_MAX_MANIFOLDS as usize],
+        physics_manifolds_count: 0,
+    };
 
     // Initialize high resolution timer
-    init_timer();
+    phys.init_timer();
+
+    let ph = PhysacHandle(
+        #[cfg(not(feature = "no_threads"))]
+        Arc::new(RwLock::new(phys)),
+        #[cfg(feature = "no_threads")]
+        phys,
+    );
+
+    #[cfg(not(feature = "no_threads"))] {
+        // NOTE: if defined, user will need to create a thread for PhysicsThread function manually
+        // Create physics thread using POSIXS thread libraries
+        let phys_clone = ph.0.clone();
+        let thread_handle = thread::spawn(move || physics_loop(phys_clone));
+        ph.0.write().unwrap().physics_thread = Some(thread_handle);
+    }
 
     if cfg!(feature = "debug") {
         println!("[PHYSAC] physics module initialized successfully");
     }
 
-    unsafe {
-        ACCUMULATOR = 0.0;
+    ph
+}
+
+impl Physac {
+    /// Returns true if physics thread is currently enabled
+    pub fn is_physics_enabled(&self) -> bool {
+        self.physics_thread_enabled
+    }
+
+    /// Sets physics global gravity force
+    pub fn set_physics_gravity(&mut self, x: f32, y: f32) {
+        self.gravity_force.x = x;
+        self.gravity_force.y = y;
     }
 }
 
-/// Returns true if physics thread is currently enabled
-pub fn is_physics_enabled() -> bool {
-    PHYSICS_THREAD_ENABLED.load(Relaxed)
-}
-
-/// Sets physics global gravity force
-pub fn set_physics_gravity(x: f32, y: f32) {
-    unsafe {
-        GRAVITY_FORCE.x = x;
-        GRAVITY_FORCE.y = y;
-    }
-}
-
-impl PhysicsBody {
+impl Physac {
     /// Creates a new circle physics body with generic parameters
-    pub fn create_circle(pos: Vector2, radius: f32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody {
         let mut new_weak_body = PhysicsBody::new();
         let new_body = StrongPhysicsBody::new(PhysicsBodyData::default());
 
-        if let Some(new_id) = find_available_body_index() {
+        if let Some(new_id) = self.find_available_body_index() {
             new_weak_body = new_body.downgrade();
             let mut new_body_data = new_body.borrow_mut();
 
@@ -484,24 +598,27 @@ impl PhysicsBody {
             drop(new_body_data);
 
             // Add new body to bodies pointers array and update bodies count
-            BODIES.write().unwrap()[PHYSICS_BODIES_COUNT.fetch_add(1, Relaxed) as usize] = Some(new_body);
+            self.bodies[self.physics_bodies_count as usize] = Some(new_body);
+            self.physics_bodies_count += 1;
 
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] created polygon physics body id {}", new_body.id);
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] created polygon physics body id {}", new_id);
+            }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            }
         }
 
         new_weak_body
     }
 
     /// Creates a new rectangle physics body with generic parameters
-    pub fn create_rectangle(pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody {
         let mut new_weak_body = PhysicsBody::new();
         let new_body = StrongPhysicsBody::new(PhysicsBodyData::default());
 
-        if let Some(new_id) = find_available_body_index() {
+        if let Some(new_id) = self.find_available_body_index() {
             new_weak_body = new_body.downgrade();
             let mut new_body_data = new_body.borrow_mut();
 
@@ -518,7 +635,7 @@ impl PhysicsBody {
             new_body_data.shape.body = new_weak_body.clone();
             new_body_data.shape.radius = 0.0;
             new_body_data.shape.transform = Mat2::radians(0.0);
-            new_body_data.shape.vertex_data = create_rectangle_polygon(pos, Vector2 { x: width, y: height });
+            new_body_data.shape.vertex_data = PolygonData::create_rectangle_polygon(pos, Vector2 { x: width, y: height });
 
             // Calculate centroid and moment of inertia
             let mut center = Vector2 { x: 0.0, y: 0.0 };
@@ -570,24 +687,27 @@ impl PhysicsBody {
             drop(new_body_data);
 
             // Add new body to bodies pointers array and update bodies count
-            BODIES.write().unwrap()[PHYSICS_BODIES_COUNT.fetch_add(1, Relaxed) as usize] = Some(new_body);
+            self.bodies[self.physics_bodies_count as usize] = Some(new_body);
+            self.physics_bodies_count += 1;
 
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] created polygon physics body id {}", new_body.id);
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] created polygon physics body id {}", new_id);
+            }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            }
         }
 
         new_weak_body
     }
 
     /// Creates a new polygon physics body with generic parameters
-    pub fn create_polygon(pos: Vector2, radius: f32, sides: u32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: u32, density: f32) -> PhysicsBody {
         let mut new_weak_body = PhysicsBody::new();
         let new_body = StrongPhysicsBody::new(PhysicsBodyData::default());
 
-        if let Some(new_id) = find_available_body_index() {
+        if let Some(new_id) = self.find_available_body_index() {
             new_weak_body = new_body.downgrade();
             let mut new_body_data = new_body.borrow_mut();
 
@@ -603,7 +723,7 @@ impl PhysicsBody {
             new_body_data.shape.kind = PHYSICS_POLYGON;
             new_body_data.shape.body = new_weak_body.clone();
             new_body_data.shape.transform = Mat2::radians(0.0);
-            new_body_data.shape.vertex_data = create_random_polygon(radius, sides);
+            new_body_data.shape.vertex_data = PolygonData::create_random_polygon(radius, sides);
 
             // Calculate centroid and moment of inertia
             let mut center = Vector2 { x: 0.0, y: 0.0 };
@@ -654,18 +774,23 @@ impl PhysicsBody {
             drop(new_body_data);
 
             // Add new body to bodies pointers array and update bodies count
-            BODIES.write().unwrap()[PHYSICS_BODIES_COUNT.fetch_add(1, Relaxed) as usize] = Some(new_body);
+            self.bodies[self.physics_bodies_count as usize] = Some(new_body);
+            self.physics_bodies_count += 1;
 
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] created polygon physics body id {}", new_body.id);
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] created polygon physics body id {}", new_id);
+            }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            }
         }
 
         new_weak_body
     }
+}
 
+impl PhysicsBody {
     /// Adds a force to a physics body
     pub fn add_force(&mut self, force: Vector2) {
         if let Some(body) = self.upgrade() {
@@ -681,10 +806,12 @@ impl PhysicsBody {
             body.torque += amount;
         }
     }
+}
 
+impl Physac {
     /// Shatters a polygon shape physics body to little physics bodies with explosion force
-    pub fn physics_shatter(&self, position: Vector2, force: f32) {
-        if let Some(phys_body) = self.upgrade() {
+    pub fn physics_shatter(&mut self, body: &PhysicsBody, position: Vector2, force: f32) {
+        if let Some(phys_body) = body.upgrade() {
             let body = phys_body.borrow_mut();
             if body.shape.kind == PHYSICS_POLYGON {
                 let vertex_data = body.shape.vertex_data;
@@ -723,7 +850,7 @@ impl PhysicsBody {
 
                     // Destroy shattered physics body
                     drop(body);
-                    phys_body.destroy();
+                    self.destroy_physics_body(phys_body);
 
                     for i in 0..count {
                         let next_index = if (i + 1) < count { i + 1 } else { 0 };
@@ -731,7 +858,7 @@ impl PhysicsBody {
                         center = body_pos + center;
                         let offset = center - body_pos;
 
-                        let new_body = PhysicsBody::create_polygon(center, 10.0, 3, 10.0).upgrade().unwrap();     // Create polygon physics body with relevant values
+                        let new_body = self.create_physics_body_polygon(center, 10.0, 3, 10.0).upgrade().unwrap();     // Create polygon physics body with relevant values
                         let mut new_body_data = new_body.borrow_mut();
 
                         let mut new_data = PolygonData::default();
@@ -816,81 +943,80 @@ impl PhysicsBody {
                 }
             }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] error when trying to shatter a null reference physics body");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] error when trying to shatter a null reference physics body");
+            }
         }
     }
-}
 
-/// Returns the current amount of created physics bodies
-pub fn get_physics_bodies_count() -> u32 {
-    PHYSICS_BODIES_COUNT.load(Relaxed)
-}
-
-/// Returns a physics body of the bodies pool at a specific index
-///
-/// # Panics
-///
-/// May panic if the index is out of bounds.
-pub fn get_physics_body(index: u32) -> Option<PhysicsBody> {
-    let bodies = BODIES.read().unwrap();
-
-    if index < PHYSICS_BODIES_COUNT.load(Relaxed) {
-        if bodies[index as usize].is_none() {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] error when trying to get a null reference physics body");
-        }
-    } else {
-        #[cfg(feature = "debug")]
-        println!("[PHYSAC] physics body index is out of bounds");
+    /// Returns the current amount of created physics bodies
+    pub fn get_physics_bodies_count(&self) -> u32 {
+        self.physics_bodies_count
     }
 
-    bodies[index as usize].as_ref().map(StrongPhysicsBody::downgrade)
-}
-
-/// Returns the physics body shape type (PHYSICS_CIRCLE or PHYSICS_POLYGON)
-pub fn get_physics_shape_type(index: u32) -> Option<PhysicsShapeType> {
-    let mut result = None;
-    let bodies = BODIES.read().unwrap();
-
-    if index < PHYSICS_BODIES_COUNT.load(Relaxed) {
-        if let Some(body) = bodies[index as usize].as_ref() {
-            let body = body.borrow();
-            result = Some(body.shape.kind);
+    /// Returns a physics body of the bodies pool at a specific index
+    ///
+    /// # Panics
+    ///
+    /// May panic if the index is out of bounds.
+    pub fn get_physics_body(&self, index: u32) -> Option<PhysicsBody> {
+        if index < self.physics_bodies_count {
+            if self.bodies[index as usize].is_none() {
+                if cfg!(feature = "debug") {
+                    println!("[PHYSAC] error when trying to get a null reference physics body");
+                }
+            }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] error when trying to get a null reference physics body");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] physics body index is out of bounds");
+            }
         }
-    } else {
-        #[cfg(feature = "debug")]
-        println!("[PHYSAC] physics body index is out of bounds");
+
+        self.bodies[index as usize].as_ref().map(StrongPhysicsBody::downgrade)
     }
 
-    result
-}
+    /// Returns the physics body shape type (PHYSICS_CIRCLE or PHYSICS_POLYGON)
+    pub fn get_physics_shape_type(&self, index: u32) -> Option<PhysicsShapeType> {
+        let mut result = None;
 
-/// Returns the amount of vertices of a physics body shape
-pub fn get_physics_shape_vertices_count(index: u32) -> u32 {
-    let mut result = 0;
-    let bodies = BODIES.read().unwrap();
-
-    if index < PHYSICS_BODIES_COUNT.load(Relaxed) {
-        if let Some(body) = bodies[index as usize].as_ref() {
-            let body = body.borrow();
-            result = match body.shape.kind {
-                PHYSICS_CIRCLE => PHYSAC_CIRCLE_VERTICES,
-                PHYSICS_POLYGON => body.shape.vertex_data.vertex_count,
-            };
+        if index < self.physics_bodies_count {
+            if let Some(body) = self.bodies[index as usize].as_ref() {
+                let body = body.borrow();
+                result = Some(body.shape.kind);
+            } else {
+                if cfg!(feature = "debug") {
+                    println!("[PHYSAC] error when trying to get a null reference physics body");
+                }
+            }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] error when trying to get a null reference physics body");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] physics body index is out of bounds");
+            }
         }
-    } else {
-        #[cfg(feature = "debug")]
-        println!("[PHYSAC] physics body index is out of bounds");
+
+        result
     }
 
-    result
+    /// Returns the amount of vertices of a physics body shape
+    pub fn get_physics_shape_vertices_count(&self, index: u32) -> u32 {
+        let mut result = 0;
+
+        if index < self.physics_bodies_count {
+            if let Some(body) = self.bodies[index as usize].as_ref() {
+                let body = body.borrow();
+                result = match body.shape.kind {
+                    PHYSICS_CIRCLE => PHYSAC_CIRCLE_VERTICES,
+                    PHYSICS_POLYGON => body.shape.vertex_data.vertex_count,
+                };
+            } else if cfg!(feature = "debug") {
+                println!("[PHYSAC] error when trying to get a null reference physics body");
+            }
+        } else if cfg!(feature = "debug") {
+            println!("[PHYSAC] physics body index is out of bounds");
+        }
+
+        result
+    }
 }
 
 impl PhysicsBody {
@@ -911,8 +1037,9 @@ impl PhysicsBody {
                 }
             }
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] error when trying to get a null reference physics body");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] error when trying to get a null reference physics body");
+            }
         }
 
         position
@@ -932,16 +1059,14 @@ impl PhysicsBody {
     }
 }
 
-impl StrongPhysicsBody {
+impl Physac {
     /// Unitializes and destroys a physics body
-    pub fn destroy(self) {
-        let id = self.borrow().id;
+    pub fn destroy_physics_body(&mut self, body: StrongPhysicsBody) {
+        let id = body.borrow().id;
         let mut index = None;
 
-        let mut bodies = BODIES.write().unwrap();
-
-        for i in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-            let body = bodies[i as usize].as_ref().unwrap();
+        for i in 0..self.physics_bodies_count {
+            let body = self.bodies[i as usize].as_ref().unwrap();
             if body.borrow().id == id {
                 index = Some(i);
                 break;
@@ -949,154 +1074,159 @@ impl StrongPhysicsBody {
         }
 
         if index.is_none() {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] Not possible to find body id {} in pointers array", id);
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] Not possible to find body id {} in pointers array", id);
+            }
             return;
         }
         let index = index.unwrap();
 
         // Free body allocated memory
-        drop(self);
-        bodies[index as usize] = None;
+        drop(body);
+        self.bodies[index as usize] = None;
 
         // Reorder physics bodies pointers array and its catched index
-        for i in index..PHYSICS_BODIES_COUNT.load(Relaxed) {
-            if let ([.., curr], [next, ..]) = bodies.split_at_mut(i as usize) {
+        for i in index..self.physics_bodies_count {
+            if let ([.., curr], [next, ..]) = self.bodies.split_at_mut(i as usize) {
                 std::mem::swap(curr, next);
             }
         }
 
         // Update physics bodies count
-        PHYSICS_BODIES_COUNT.store(PHYSICS_BODIES_COUNT.load(Relaxed) - 1, Relaxed);
+        self.physics_bodies_count -= 1;
 
-        #[cfg(feature = "debug")]
-        println!("[PHYSAC] destroyed physics body id {}", id);
+        if cfg!(feature = "debug") {
+            println!("[PHYSAC] destroyed physics body id {}", id);
+        }
     }
-}
 
-impl PhysicsBody {
-    pub fn destroy(self) {
-        if let Some(body) = self.upgrade() {
-            body.destroy();
-        } else {
-            #[cfg(feature = "debug")]
+    pub fn destroy(&mut self, body: PhysicsBody) {
+        if let Some(body) = body.upgrade() {
+            self.destroy_physics_body(body);
+        } else if cfg!(feature = "debug") {
             println!("[PHYSAC] error trying to destroy a null referenced body");
         }
     }
-}
 
-/// Unitializes physics pointers and exits physics loop thread
-pub fn close_physics() {
-    // Exit physics loop thread
-    PHYSICS_THREAD_ENABLED.store(false, Relaxed);
+    /// Unitializes physics pointers and exits physics loop thread
+    pub fn close_physics(&mut self) {
+        // Exit physics loop thread
+        self.physics_thread_enabled = false;
 
-    // #[cfg(not(feature = "no_threads"))]
-    // pthread_join(physicsThreadId, NULL);
+        #[cfg(not(feature = "no_threads"))] {
+            self.physics_thread.take().unwrap().join().unwrap();
+        }
 
-    let contacts = CONTACTS.write().unwrap();
-    let bodies = BODIES.write().unwrap();
+        // Unitialize physics manifolds dynamic memory allocations
+        for i in (0..self.physics_manifolds_count).rev() {
+            let manifold = self.contacts[i as usize].as_ref().unwrap().downgrade();
+            self.destroy_physics_manifold(manifold);
+        }
 
-    // Unitialize physics manifolds dynamic memory allocations
-    for i in (0..PHYSICS_MANIFOLDS_COUNT.load(Relaxed)).rev() {
-        contacts[i as usize].as_ref().cloned().unwrap().destroy();
+        // Unitialize physics bodies dynamic memory allocations
+        for i in (0..self.physics_bodies_count).rev() {
+            let body = self.bodies[i as usize].as_ref().cloned().unwrap();
+            self.destroy_physics_body(body);
+        }
+
+        if cfg!(feature = "debug") {
+            println!("[PHYSAC] physics module closed successfully");
+        }
     }
-
-    // Unitialize physics bodies dynamic memory allocations
-    for i in (0..PHYSICS_BODIES_COUNT.load(Relaxed)).rev() {
-        bodies[i as usize].as_ref().cloned().unwrap().destroy();
-    }
-
-    #[cfg(feature = "debug")]
-    println!("[PHYSAC] physics module closed successfully");
 }
 
 //----------------------------------------------------------------------------------
 // Module Internal Functions Definition
 //----------------------------------------------------------------------------------
-/// Finds a valid index for a new physics body initialization
-fn find_available_body_index() -> Option<u32> {
-    let mut index = None;
-    let bodies = BODIES.read().unwrap();
-    for i in 0..PHYSAC_MAX_BODIES {
-        let mut current_id = i;
+impl Physac {
+    /// Finds a valid index for a new physics body initialization
+    fn find_available_body_index(&self) -> Option<u32> {
+        let mut index = None;
+        for i in 0..PHYSAC_MAX_BODIES {
+            let mut current_id = i;
 
-        // Check if current id already exist in other physics body
-        for k in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-            let body = bodies[k as usize].as_ref().unwrap(); // every body index < PHYSICS_BODIES_COUNT should be Some
-            let body = body.borrow();
-            if body.id == current_id {
-                current_id += 1;
+            // Check if current id already exist in other physics body
+            for k in 0..self.physics_bodies_count {
+                let body = self.bodies[k as usize].as_ref().unwrap(); // every body index < PHYSICS_BODIES_COUNT should be Some
+                let body = body.borrow();
+                if body.id == current_id {
+                    current_id += 1;
+                    break;
+                }
+            }
+
+            // If it is not used, use it as new physics body id
+            if current_id == i {
+                index = Some(i);
                 break;
             }
         }
 
-        // If it is not used, use it as new physics body id
-        if current_id == i {
-            index = Some(i);
-            break;
+        index
+    }
+}
+
+impl PolygonData {
+    /// Creates a random polygon shape with max vertex distance from polygon pivot
+    fn create_random_polygon(radius: f32, sides: u32) -> PolygonData {
+        let mut data = PolygonData::default();
+        data.vertex_count = sides;
+
+        // Calculate polygon vertices positions
+        for i in 0..data.vertex_count {
+            data.positions[i as usize].x = (360.0/sides as f32*i as f32*DEG2RAD as f32).cos()*radius;
+            data.positions[i as usize].y = (360.0/sides as f32*i as f32*DEG2RAD as f32).sin()*radius;
         }
+
+        // Calculate polygon faces normals
+        for i in 0..data.vertex_count {
+            let next_index = if (i + 1) < sides { i + 1 } else { 0 };
+            let face = data.positions[next_index as usize] - data.positions[i as usize];
+
+            data.normals[i as usize] = Vector2 { x: face.y, y: -face.x };
+            math_normalize(&mut data.normals[i as usize]);
+        }
+
+        data
     }
 
-    index
-}
+    /// Creates a rectangle polygon shape based on a min and max positions
+    fn create_rectangle_polygon(pos: Vector2, size: Vector2) -> PolygonData {
+        let mut data = PolygonData::default();
+        data.vertex_count = 4;
 
-/// Creates a random polygon shape with max vertex distance from polygon pivot
-fn create_random_polygon(radius: f32, sides: u32) -> PolygonData {
-    let mut data = PolygonData::default();
-    data.vertex_count = sides;
+        // Calculate polygon vertices positions
+        data.positions[0] = Vector2 { x: pos.x + size.x/2.0, y: pos.y - size.y/2.0 };
+        data.positions[1] = Vector2 { x: pos.x + size.x/2.0, y: pos.y + size.y/2.0 };
+        data.positions[2] = Vector2 { x: pos.x - size.x/2.0, y: pos.y + size.y/2.0 };
+        data.positions[3] = Vector2 { x: pos.x - size.x/2.0, y: pos.y - size.y/2.0 };
 
-    // Calculate polygon vertices positions
-    for i in 0..data.vertex_count {
-        data.positions[i as usize].x = (360.0/sides as f32*i as f32*DEG2RAD as f32).cos()*radius;
-        data.positions[i as usize].y = (360.0/sides as f32*i as f32*DEG2RAD as f32).sin()*radius;
+        // Calculate polygon faces normals
+        for i in 0..data.vertex_count {
+            let next_index = if (i + 1) < data.vertex_count { i + 1 } else { 0 };
+            let face = data.positions[next_index as usize] - data.positions[i as usize];
+
+            data.normals[i as usize] = Vector2 { x: face.y, y: -face.x };
+            math_normalize(&mut data.normals[i as usize]);
+        }
+
+        data
     }
-
-    // Calculate polygon faces normals
-    for i in 0..data.vertex_count {
-        let next_index = if (i + 1) < sides { i + 1 } else { 0 };
-        let face = data.positions[next_index as usize] - data.positions[i as usize];
-
-        data.normals[i as usize] = Vector2 { x: face.y, y: -face.x };
-        math_normalize(&mut data.normals[i as usize]);
-    }
-
-    data
-}
-
-/// Creates a rectangle polygon shape based on a min and max positions
-fn create_rectangle_polygon(pos: Vector2, size: Vector2) -> PolygonData {
-    let mut data = PolygonData::default();
-    data.vertex_count = 4;
-
-    // Calculate polygon vertices positions
-    data.positions[0] = Vector2 { x: pos.x + size.x/2.0, y: pos.y - size.y/2.0 };
-    data.positions[1] = Vector2 { x: pos.x + size.x/2.0, y: pos.y + size.y/2.0 };
-    data.positions[2] = Vector2 { x: pos.x - size.x/2.0, y: pos.y + size.y/2.0 };
-    data.positions[3] = Vector2 { x: pos.x - size.x/2.0, y: pos.y - size.y/2.0 };
-
-    // Calculate polygon faces normals
-    for i in 0..data.vertex_count {
-        let next_index = if (i + 1) < data.vertex_count { i + 1 } else { 0 };
-        let face = data.positions[next_index as usize] - data.positions[i as usize];
-
-        data.normals[i as usize] = Vector2 { x: face.y, y: -face.x };
-        math_normalize(&mut data.normals[i as usize]);
-    }
-
-    data
 }
 
 /// Physics loop thread function
-fn physics_loop() {
-    #[cfg(feature = "debug")]
-    println!("[PHYSAC] physics thread created successfully");
+#[cfg(not(feature = "no_threads"))]
+fn physics_loop(phys: Arc<RwLock<Physac>>) {
+    if cfg!(feature = "debug") {
+        println!("[PHYSAC] physics thread created successfully");
+    }
 
     // Initialize physics loop thread values
-    PHYSICS_THREAD_ENABLED.store(true, Relaxed);
+    phys.write().unwrap().physics_thread_enabled = true;
 
     // Physics update loop
-    while PHYSICS_THREAD_ENABLED.load(Relaxed) {
-        run_physics_step();
+    while phys.read().unwrap().physics_thread_enabled {
+        phys.write().unwrap().run_physics_step();
 
         let req = Duration::from_nanos((PHYSAC_FIXED_TIME*1000.0*1000.0) as u64);
 
@@ -1104,176 +1234,164 @@ fn physics_loop() {
     }
 }
 
-/// Physics steps calculations (dynamics, collisions and position corrections)
-fn physics_step() {
-    // Update current steps count
-    STEPS_COUNT.store(STEPS_COUNT.load(Relaxed) + 1, Relaxed);
+impl Physac {
+    /// Physics steps calculations (dynamics, collisions and position corrections)
+    fn physics_step(&mut self) {
+        // Update current steps count
+        self.steps_count += 1;
 
-    let contacts = CONTACTS.write().unwrap();
-    let bodies = BODIES.write().unwrap();
+        // Clear previous generated collisions information
+        for i in (0..self.physics_manifolds_count).rev() {
+            let manifold = self.contacts[i as usize].as_ref();
 
-    // Clear previous generated collisions information
-    for i in (0..PHYSICS_MANIFOLDS_COUNT.load(Relaxed)).rev() {
-        let manifold = contacts[i as usize].as_ref();
-
-        if let Some(manifold) = manifold {
-            manifold.clone().destroy();
+            if let Some(manifold) = manifold {
+                self.destroy_physics_manifold(manifold.downgrade());
+            }
         }
-    }
 
-    // Reset physics bodies grounded state
-    for i in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-        let body = bodies[i as usize].as_ref().unwrap();
-        body.borrow_mut().is_grounded = false;
-    }
+        // Reset physics bodies grounded state
+        for i in 0..self.physics_bodies_count {
+            let body = self.bodies[i as usize].as_ref().unwrap();
+            body.borrow_mut().is_grounded = false;
+        }
 
-    // Generate new collision information
-    for i in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-        let body_a = bodies[i as usize].as_ref();
+        // Generate new collision information
+        for i in 0..self.physics_bodies_count {
+            if self.bodies[i as usize].is_some() {
+                for j in (i + 1)..self.physics_bodies_count {
+                    if let (front_slice, [Some(body_b), ..]) = self.bodies.split_at(j as usize) {
+                        let body_a = front_slice[i as usize].as_ref().unwrap();
 
-        if let Some(body_a) = body_a {
-            for j in (i + 1)..PHYSICS_BODIES_COUNT.load(Relaxed) {
-                let body_b = bodies[j as usize].as_ref();
+                        if (body_a.borrow().inverse_mass == 0.0) && (body_b.borrow().inverse_mass == 0.0) {
+                            continue;
+                        }
 
-                if let Some(body_b) = body_b {
-                    if (body_a.borrow().inverse_mass == 0.0) && (body_b.borrow().inverse_mass == 0.0) {
-                        continue;
-                    }
+                        let body_a = body_a.downgrade();
+                        let body_b = body_b.downgrade();
 
-                    let manifold = PhysicsManifold::create(&body_a.downgrade(), &body_b.downgrade()).upgrade().unwrap();
-                    let mut manifold_data = manifold.borrow_mut();
-                    manifold_data.solve();
+                        let manifold = self.create_physics_manifold(&body_a, &body_b).upgrade().unwrap();
+                        let mut manifold_data = manifold.borrow_mut();
+                        manifold_data.solve();
 
-                    if manifold_data.contacts_count > 0 {
-                        // Create a new manifold with same information as previously solved manifold and add it to the manifolds pool last slot
-                        let new_manifold = PhysicsManifold::create(&body_a.downgrade(), &body_b.downgrade()).upgrade().unwrap();
-                        let mut new_manifold_data = new_manifold.borrow_mut();
-                        new_manifold_data.penetration = manifold_data.penetration;
-                        new_manifold_data.normal = manifold_data.normal;
-                        new_manifold_data.contacts[0] = manifold_data.contacts[0];
-                        new_manifold_data.contacts[1] = manifold_data.contacts[1];
-                        new_manifold_data.contacts_count = manifold_data.contacts_count;
-                        new_manifold_data.restitution = manifold_data.restitution;
-                        new_manifold_data.dynamic_friction = manifold_data.dynamic_friction;
-                        new_manifold_data.static_friction = manifold_data.static_friction;
+                        if manifold_data.contacts_count > 0 {
+                            // Create a new manifold with same information as previously solved manifold and add it to the manifolds pool last slot
+                            let new_manifold = self.create_physics_manifold(&body_a, &body_b).upgrade().unwrap();
+                            let mut new_manifold_data = new_manifold.borrow_mut();
+                            new_manifold_data.penetration = manifold_data.penetration;
+                            new_manifold_data.normal = manifold_data.normal;
+                            new_manifold_data.contacts[0] = manifold_data.contacts[0];
+                            new_manifold_data.contacts[1] = manifold_data.contacts[1];
+                            new_manifold_data.contacts_count = manifold_data.contacts_count;
+                            new_manifold_data.restitution = manifold_data.restitution;
+                            new_manifold_data.dynamic_friction = manifold_data.dynamic_friction;
+                            new_manifold_data.static_friction = manifold_data.static_friction;
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Integrate forces to physics bodies
-    for i in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-        let body = bodies[i as usize].as_ref();
+        // Integrate forces to physics bodies
+        for i in 0..self.physics_bodies_count {
+            let body = self.bodies[i as usize].as_ref();
 
-        if let Some(body) = body {
-            body.borrow_mut().integrate_physics_forces();
+            if let Some(body) = body {
+                self.integrate_physics_forces(&mut *body.borrow_mut());
+            }
         }
-    }
 
-    // Initialize physics manifolds to solve collisions
-    for i in 0..PHYSICS_MANIFOLDS_COUNT.load(Relaxed) {
-        let manifold = contacts[i as usize].as_ref();
-
-        if let Some(manifold) = manifold {
-            manifold.borrow_mut().initialize_physics_manifolds();
-        }
-    }
-
-    // Integrate physics collisions impulses to solve collisions
-    for _i in 0..PHYSAC_COLLISION_ITERATIONS {
-        for j in 0..PHYSICS_MANIFOLDS_COUNT.load(Relaxed) {
-            let manifold = contacts[j as usize].as_ref();
+        // Initialize physics manifolds to solve collisions
+        for i in 0..self.physics_manifolds_count {
+            let manifold = self.contacts[i as usize].as_ref();
 
             if let Some(manifold) = manifold {
-                manifold.borrow_mut().integrate_physics_impulses();
+                self.initialize_physics_manifolds(&mut *manifold.borrow_mut());
+            }
+        }
+
+        // Integrate physics collisions impulses to solve collisions
+        for _i in 0..PHYSAC_COLLISION_ITERATIONS {
+            for j in 0..self.physics_manifolds_count {
+                let manifold = self.contacts[j as usize].as_ref();
+
+                if let Some(manifold) = manifold {
+                    self.integrate_physics_impulses(&mut *manifold.borrow_mut());
+                }
+            }
+        }
+
+        // Integrate velocity to physics bodies
+        for i in 0..self.physics_bodies_count {
+            let body = self.bodies[i as usize].as_ref();
+
+            if let Some(body) = body {
+                self.integrate_physics_velocity(&mut *body.borrow_mut());
+            }
+        }
+
+        // Correct physics bodies positions based on manifolds collision information
+        for i in 0..self.physics_manifolds_count {
+            let manifold = self.contacts[i as usize].as_ref();
+
+            if let Some(manifold) = manifold {
+                self.correct_physics_positions(&mut *manifold.borrow_mut());
+            }
+        }
+
+        // Clear physics bodies forces
+        for i in 0..self.physics_bodies_count {
+            let body = self.bodies[i as usize].as_ref();
+
+            if let Some(body) = body {
+                let mut body = body.borrow_mut();
+                body.force = Vector2::zero();
+                body.torque = 0.0;
             }
         }
     }
 
-    // Integrate velocity to physics bodies
-    for i in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-        let body = bodies[i as usize].as_ref();
+    /// Wrapper to ensure PhysicsStep is run with at a fixed time step
+    pub fn run_physics_step(&mut self) {
+        // Calculate current time
+        self.current_time = self.get_curr_time();
 
-        if let Some(body) = body {
-            body.borrow_mut().integrate_physics_velocity();
+        // Calculate current delta time
+        let delta: f64 = self.current_time - self.start_time;
+
+        // Store the time elapsed since the last frame began
+        self.accumulator += delta;
+
+        // Fixed time stepping loop
+        while self.accumulator >= self.delta_time {
+            self.physics_step();
+            self.accumulator -= self.delta_time;
         }
+
+        // Record the starting of this frame
+        self.start_time = self.current_time;
     }
 
-    // Correct physics bodies positions based on manifolds collision information
-    for i in 0..PHYSICS_MANIFOLDS_COUNT.load(Relaxed) {
-        let manifold = contacts[i as usize].as_ref();
+    pub fn set_physics_time_step(&mut self, delta: f64) {
+        self.delta_time = delta;
+    }
 
-        if let Some(manifold) = manifold {
-            manifold.borrow_mut().correct_physics_positions();
+    /// Finds a valid index for a new manifold initialization
+    fn find_available_manifold_index(&self) -> Option<u32> {
+        let id = self.physics_manifolds_count + 1;
+
+        if id >= PHYSAC_MAX_MANIFOLDS {
+            return None;
         }
+
+        Some(id)
     }
 
-    // Clear physics bodies forces
-    for i in 0..PHYSICS_BODIES_COUNT.load(Relaxed) {
-        let body = bodies[i as usize].as_ref();
-
-        if let Some(body) = body {
-            let mut body = body.borrow_mut();
-            body.force = Vector2::zero();
-            body.torque = 0.0;
-        }
-    }
-}
-
-/// Wrapper to ensure PhysicsStep is run with at a fixed time step
-pub fn run_physics_step() {
-    // Calculate current time
-    unsafe {
-        CURRENT_TIME = get_curr_time();
-    }
-
-    // Calculate current delta time
-    let delta: f64 = unsafe { CURRENT_TIME - START_TIME };
-
-    // Store the time elapsed since the last frame began
-    unsafe {
-        ACCUMULATOR += delta;
-    }
-
-    // Fixed time stepping loop
-    while unsafe { ACCUMULATOR >= DELTA_TIME } {
-        physics_step();
-        unsafe {
-            ACCUMULATOR -= DELTA_TIME;
-        }
-    }
-
-    // Record the starting of this frame
-    unsafe {
-        START_TIME = CURRENT_TIME;
-    }
-}
-
-pub fn set_physics_time_step(delta: f64) {
-    unsafe {
-        DELTA_TIME = delta;
-    }
-}
-
-/// Finds a valid index for a new manifold initialization
-fn find_available_manifold_index() -> Option<u32> {
-    let id = PHYSICS_MANIFOLDS_COUNT.load(Relaxed) + 1;
-
-    if id >= PHYSAC_MAX_MANIFOLDS {
-        return None;
-    }
-
-    Some(id)
-}
-
-impl PhysicsManifold {
     /// Creates a new physics manifold to solve collision
-    fn create(a: &PhysicsBody, b: &PhysicsBody) -> PhysicsManifold {
+    fn create_physics_manifold(&mut self, a: &PhysicsBody, b: &PhysicsBody) -> PhysicsManifold {
         let mut new_weak_manifold = PhysicsManifold::new();
         let new_manifold = StrongPhysicsManifold::new(PhysicsManifoldData::default());
 
-        if let Some(new_id) = find_available_manifold_index() {
+        if let Some(new_id) = self.find_available_manifold_index() {
             new_weak_manifold = new_manifold.downgrade();
             // unwraps are safe here because there is no way something else has a reference to the arc we JUST created locally
             let mut new_manifold_data = new_manifold.borrow_mut();
@@ -1294,62 +1412,55 @@ impl PhysicsManifold {
             drop(new_manifold_data);
 
             // Add new body to bodies pointers array and update bodies count
-            CONTACTS.write().unwrap()[PHYSICS_MANIFOLDS_COUNT.fetch_add(1, Relaxed) as usize] = Some(new_manifold);
+            self.contacts[self.physics_manifolds_count as usize] = Some(new_manifold);
+            self.physics_manifolds_count += 1;
         } else {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] new physics manifold creation failed because there is any available id to use");
+            if cfg!(feature = "debug") {
+                println!("[PHYSAC] new physics manifold creation failed because there is any available id to use");
+            }
         }
 
         new_weak_manifold
     }
 
     /// Unitializes and destroys a physics manifold
-    fn destroy(self) {
-        if let Some(manifold) = self.upgrade() {
-            manifold.destroy();
-        } else {
-            #[cfg(feature = "debug")]
+    fn destroy_physics_manifold(&mut self, manifold: PhysicsManifold) {
+        if let Some(manifold) = manifold.upgrade() {
+            let id = manifold.borrow().id;
+            let mut index = None;
+
+            for i in 0..self.physics_manifolds_count {
+                let contact = self.contacts[i as usize].as_ref().unwrap();
+                if contact.borrow().id == id {
+                    index = Some(i);
+                    break;
+                }
+            }
+
+            if index.is_none() {
+                if cfg!(feature = "debug") {
+                    println!("[PHYSAC] Not possible to manifold id {} in pointers array", id);
+                }
+                return;
+            }
+            let index = index.unwrap();
+
+            // Free manifold allocated memory
+            drop(manifold);
+            self.contacts[index as usize] = None;
+
+            // Reorder physics manifolds pointers array and its catched index
+            for i in index..self.physics_manifolds_count {
+                if let ([.., curr], [next, ..]) = self.contacts.split_at_mut(i as usize) {
+                    std::mem::swap(curr, next);
+                }
+            }
+
+            // Update physics manifolds count
+            self.physics_manifolds_count -= 1;
+        } else if cfg!(feature = "debug") {
             println!("[PHYSAC] error trying to destroy a null referenced manifold");
         }
-    }
-}
-
-impl StrongPhysicsManifold {
-    /// Unitializes and destroys a physics manifold
-    fn destroy(self) {
-        let mut contacts = CONTACTS.write().unwrap();
-
-        let id = self.borrow().id;
-        let mut index = None;
-
-        for i in 0..PHYSICS_MANIFOLDS_COUNT.load(Relaxed) {
-            let contact = contacts[i as usize].as_ref().unwrap();
-            if contact.borrow().id == id {
-                index = Some(i);
-                break;
-            }
-        }
-
-        if index.is_none() {
-            #[cfg(feature = "debug")]
-            println!("[PHYSAC] Not possible to manifold id {} in pointers array", id);
-            return;
-        }
-        let index = index.unwrap();
-
-        // Free manifold allocated memory
-        drop(self);
-        contacts[index as usize] = None;
-
-        // Reorder physics manifolds pointers array and its catched index
-        for i in index..PHYSICS_MANIFOLDS_COUNT.load(Relaxed) {
-            if let ([.., curr], [next, ..]) = contacts.split_at_mut(i as usize) {
-                std::mem::swap(curr, next);
-            }
-        }
-
-        // Update physics manifolds count
-        PHYSICS_MANIFOLDS_COUNT.store(PHYSICS_MANIFOLDS_COUNT.load(Relaxed) - 1, Relaxed);
     }
 }
 
@@ -1654,47 +1765,45 @@ impl PhysicsManifoldData {
     }
 }
 
-impl PhysicsBodyData {
+impl Physac {
     /// Integrates physics forces into velocity
-    fn integrate_physics_forces(&mut self) {
-        if (self.inverse_mass == 0.0) || !self.enabled {
+    fn integrate_physics_forces(&self, body: &mut PhysicsBodyData) {
+        if (body.inverse_mass == 0.0) || !body.enabled {
             return;
         }
 
-        self.velocity.x += ((self.force.x*self.inverse_mass) as f64*(unsafe { DELTA_TIME }/2.0)) as f32;
-        self.velocity.y += ((self.force.y*self.inverse_mass) as f64*(unsafe { DELTA_TIME }/2.0)) as f32;
+        body.velocity.x += ((body.force.x*body.inverse_mass) as f64*(self.delta_time/2.0)) as f32;
+        body.velocity.y += ((body.force.y*body.inverse_mass) as f64*(self.delta_time/2.0)) as f32;
 
-        if self.use_gravity {
-            self.velocity.x += (unsafe { GRAVITY_FORCE.x as f64 }*(unsafe { DELTA_TIME }/1000.0/2.0)) as f32;
-            self.velocity.y += (unsafe { GRAVITY_FORCE.y as f64 }*(unsafe { DELTA_TIME }/1000.0/2.0)) as f32;
+        if body.use_gravity {
+            body.velocity.x += (self.gravity_force.x as f64*(self.delta_time/1000.0/2.0)) as f32;
+            body.velocity.y += (self.gravity_force.y as f64*(self.delta_time/1000.0/2.0)) as f32;
         }
 
-        if !self.freeze_orient {
-            self.angular_velocity += (self.torque as f64*self.inverse_inertia as f64*(unsafe { DELTA_TIME }/2.0)) as f32;
+        if !body.freeze_orient {
+            body.angular_velocity += (body.torque as f64*body.inverse_inertia as f64*(self.delta_time/2.0)) as f32;
         }
     }
-}
 
-impl PhysicsManifoldData {
     /// Initializes physics manifolds to solve collisions
-    fn initialize_physics_manifolds(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
+    fn initialize_physics_manifolds(&self, manifold: &mut PhysicsManifoldData) {
+        let body_a = manifold.body_a.upgrade();
+        let body_b = manifold.body_b.upgrade();
 
         if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
             let body_a = body_a.borrow();
             let body_b = body_b.borrow();
 
             // Calculate average restitution, static and dynamic friction
-            self.restitution = (body_a.restitution*body_b.restitution).sqrt();
-            self.static_friction = (body_a.static_friction*body_b.static_friction).sqrt();
-            self.dynamic_friction = (body_a.dynamic_friction*body_b.dynamic_friction).sqrt();
+            manifold.restitution = (body_a.restitution*body_b.restitution).sqrt();
+            manifold.static_friction = (body_a.static_friction*body_b.static_friction).sqrt();
+            manifold.dynamic_friction = (body_a.dynamic_friction*body_b.dynamic_friction).sqrt();
 
-            for i in 0..self.contacts_count
+            for i in 0..manifold.contacts_count
             {
                 // Caculate radius from center of mass to contact
-                let radius_a = self.contacts[i as usize] - body_a.position;
-                let radius_b = self.contacts[i as usize] - body_b.position;
+                let radius_a = manifold.contacts[i as usize] - body_a.position;
+                let radius_b = manifold.contacts[i as usize] - body_b.position;
 
                 let cross_a = math_cross(body_a.angular_velocity, radius_a);
                 let cross_b = math_cross(body_b.angular_velocity, radius_b);
@@ -1706,19 +1815,19 @@ impl PhysicsManifoldData {
                 // Determine if we should perform a resting collision or not;
                 // The idea is if the only thing moving this object is gravity, then the collision should be performed without any restitution
                 if radius_v.length_sqr() < ((Vector2 {
-                    x: unsafe { GRAVITY_FORCE.x }*unsafe { DELTA_TIME } as f32/1000.0,
-                    y: unsafe { GRAVITY_FORCE.y }*unsafe { DELTA_TIME } as f32/1000.0,
+                    x: self.gravity_force.x*self.delta_time as f32/1000.0,
+                    y: self.gravity_force.y*self.delta_time as f32/1000.0,
                 }).length_sqr() + f32::EPSILON) {
-                    self.restitution = 0.0;
+                    manifold.restitution = 0.0;
                 }
             }
         }
     }
 
     /// Integrates physics collisions impulses to solve collisions
-    fn integrate_physics_impulses(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
+    fn integrate_physics_impulses(&self, manifold: &mut PhysicsManifoldData) {
+        let body_a = manifold.body_a.upgrade();
+        let body_b = manifold.body_b.upgrade();
 
         if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
             let mut body_a = body_a.borrow_mut();
@@ -1731,10 +1840,10 @@ impl PhysicsManifoldData {
                 return;
             }
 
-            for i in 0..self.contacts_count {
+            for i in 0..manifold.contacts_count {
                 // Calculate radius from center of mass to contact
-                let radius_a = self.contacts[i as usize] - body_a.position;
-                let radius_b = self.contacts[i as usize] - body_b.position;
+                let radius_a = manifold.contacts[i as usize] - body_a.position;
+                let radius_b = manifold.contacts[i as usize] - body_b.position;
 
                 // Calculate relative velocity
                 let mut radius_v = Vector2::zero();
@@ -1742,25 +1851,25 @@ impl PhysicsManifoldData {
                 radius_v.y = body_b.velocity.y + math_cross(body_b.angular_velocity, radius_b).y - body_a.velocity.y - math_cross(body_a.angular_velocity, radius_a).y;
 
                 // Relative velocity along the normal
-                let contact_velocity = radius_v.dot(self.normal);
+                let contact_velocity = radius_v.dot(manifold.normal);
 
                 // Do not resolve if velocities are separating
                 if contact_velocity > 0.0 {
                     return;
                 }
 
-                let ra_cross_n = math_cross_vector2(radius_a, self.normal);
-                let rb_cross_n = math_cross_vector2(radius_b, self.normal);
+                let ra_cross_n = math_cross_vector2(radius_a, manifold.normal);
+                let rb_cross_n = math_cross_vector2(radius_b, manifold.normal);
 
                 let inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass + (ra_cross_n*ra_cross_n)*body_a.inverse_inertia + (rb_cross_n*rb_cross_n)*body_b.inverse_inertia;
 
                 // Calculate impulse scalar value
-                let mut impulse = -(1.0 + self.restitution)*contact_velocity;
+                let mut impulse = -(1.0 + manifold.restitution)*contact_velocity;
                 impulse /= inverse_mass_sum;
-                impulse /= self.contacts_count as f32;
+                impulse /= manifold.contacts_count as f32;
 
                 // Apply impulse to each physics body
-                let impulse_v = self.normal*impulse;
+                let impulse_v = manifold.normal*impulse;
 
                 if body_a.enabled {
                     body_a.velocity.x += body_a.inverse_mass*(-impulse_v.x);
@@ -1785,15 +1894,15 @@ impl PhysicsManifoldData {
                 radius_v.y = body_b.velocity.y + math_cross(body_b.angular_velocity, radius_b).y - body_a.velocity.y - math_cross(body_a.angular_velocity, radius_a).y;
 
                 let mut tangent = Vector2 {
-                    x: radius_v.x - (self.normal.x*radius_v.dot(self.normal)),
-                    y: radius_v.y - (self.normal.y*radius_v.dot(self.normal)),
+                    x: radius_v.x - (manifold.normal.x*radius_v.dot(manifold.normal)),
+                    y: radius_v.y - (manifold.normal.y*radius_v.dot(manifold.normal)),
                 };
                 math_normalize(&mut tangent);
 
                 // Calculate impulse tangent magnitude
                 let mut impulse_tangent = -radius_v.dot(tangent);
                 impulse_tangent /= inverse_mass_sum;
-                impulse_tangent /= self.contacts_count as f32;
+                impulse_tangent /= manifold.contacts_count as f32;
 
                 let abs_impulse_tangent = impulse_tangent.abs();
 
@@ -1803,10 +1912,10 @@ impl PhysicsManifoldData {
                 }
 
                 // Apply coulumb's law
-                let tangent_impulse = if abs_impulse_tangent < impulse*self.static_friction {
+                let tangent_impulse = if abs_impulse_tangent < impulse*manifold.static_friction {
                     Vector2 { x: tangent.x*impulse_tangent, y: tangent.y*impulse_tangent }
                 } else {
-                    Vector2 { x: tangent.x*-impulse*self.dynamic_friction, y: tangent.y*-impulse*self.dynamic_friction }
+                    Vector2 { x: tangent.x*-impulse*manifold.dynamic_friction, y: tangent.y*-impulse*manifold.dynamic_friction }
                 };
 
                 // Apply friction impulse
@@ -1830,42 +1939,38 @@ impl PhysicsManifoldData {
             }
         }
     }
-}
 
-impl PhysicsBodyData {
     /// Integrates physics velocity into position and forces
-    fn integrate_physics_velocity(&mut self) {
-        if !self.enabled {
+    fn integrate_physics_velocity(&self, body: &mut PhysicsBodyData) {
+        if !body.enabled {
             return;
         }
 
-        self.position.x += (self.velocity.x as f64*unsafe { DELTA_TIME }) as f32;
-        self.position.y += (self.velocity.y as f64*unsafe { DELTA_TIME }) as f32;
+        body.position.x += (body.velocity.x as f64*self.delta_time) as f32;
+        body.position.y += (body.velocity.y as f64*self.delta_time) as f32;
 
-        if !self.freeze_orient {
-            self.orient += (self.angular_velocity as f64*unsafe { DELTA_TIME }) as f32;
+        if !body.freeze_orient {
+            body.orient += (body.angular_velocity as f64*self.delta_time) as f32;
         }
 
-        let orient = self.orient;
-        self.shape.transform.set(orient);
+        let orient = body.orient;
+        body.shape.transform.set(orient);
 
-        self.integrate_physics_forces();
+        self.integrate_physics_forces(body);
     }
-}
 
-impl PhysicsManifoldData {
     /// Corrects physics bodies positions based on manifolds collision information
-    fn correct_physics_positions(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
+    fn correct_physics_positions(&self, manifold: &mut PhysicsManifoldData) {
+        let body_a = manifold.body_a.upgrade();
+        let body_b = manifold.body_b.upgrade();
 
         if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
             let mut body_a = body_a.borrow_mut();
             let mut body_b = body_b.borrow_mut();
 
             let correction = Vector2 {
-                x: ((self.penetration - PHYSAC_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*self.normal.x*PHYSAC_PENETRATION_CORRECTION,
-                y: ((self.penetration - PHYSAC_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*self.normal.y*PHYSAC_PENETRATION_CORRECTION,
+                x: ((manifold.penetration - PHYSAC_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.x*PHYSAC_PENETRATION_CORRECTION,
+                y: ((manifold.penetration - PHYSAC_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.y*PHYSAC_PENETRATION_CORRECTION,
             };
 
             if body_a.enabled {
@@ -2024,21 +2129,23 @@ fn triangle_barycenter(v1: Vector2, v2: Vector2, v3: Vector2) -> Vector2 {
     }
 }
 
-/// Initializes hi-resolution MONOTONIC timer
-fn init_timer() {
-    BASE_TIME.set(Instant::now()).expect("tried to initialize timer twice"); // Get MONOTONIC clock time offset
-    unsafe { START_TIME = get_curr_time() }; // Get current time
-}
+impl Physac {
+    /// Initializes hi-resolution MONOTONIC timer
+    fn init_timer(&mut self) {
+        self.base_time = Instant::now(); // Get MONOTONIC clock time offset
+        self.start_time = self.get_curr_time(); // Get current time
+    }
 
-/// Get hi-res MONOTONIC time measure in seconds
-fn get_time_count() -> u64 {
-    BASE_TIME.get().expect("BASE_TIME should be initialized before checking time").elapsed().as_secs()
-}
+    /// Get hi-res MONOTONIC time measure in seconds
+    fn _get_time_count(&self) -> u64 {
+        self.base_time.elapsed().as_secs()
+    }
 
-/// Get current time in milliseconds
-fn get_curr_time() -> f64 {
-    let duration = BASE_TIME.get().expect("BASE_TIME should be initialized before checking time").elapsed();
-    duration.as_secs_f64() * 1_000.0
+    /// Get current time in milliseconds
+    fn get_curr_time(&self) -> f64 {
+        let duration = self.base_time.elapsed();
+        duration.as_secs_f64() * 1_000.0
+    }
 }
 
 // Returns the cross product of a vector and a value
@@ -2062,6 +2169,7 @@ impl Vector2 {
 #[cfg(not(feature = "raylib"))]
 impl std::ops::Neg for Vector2 {
     type Output = Self;
+    #[inline(always)]
     fn neg(self) -> Self::Output {
         Self {
             x: -self.x,
@@ -2072,6 +2180,7 @@ impl std::ops::Neg for Vector2 {
 #[cfg(not(feature = "raylib"))]
 impl std::ops::Add for Vector2 {
     type Output = Self;
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
         Self {
             x: self.x + rhs.x,
@@ -2082,6 +2191,7 @@ impl std::ops::Add for Vector2 {
 #[cfg(not(feature = "raylib"))]
 impl std::ops::Sub for Vector2 {
     type Output = Self;
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
         Self {
             x: self.x - rhs.x,
@@ -2092,6 +2202,7 @@ impl std::ops::Sub for Vector2 {
 #[cfg(not(feature = "raylib"))]
 impl std::ops::Mul for Vector2 {
     type Output = Self;
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
         Self {
             x: self.x * rhs.x,
@@ -2102,6 +2213,7 @@ impl std::ops::Mul for Vector2 {
 #[cfg(not(feature = "raylib"))]
 impl std::ops::Mul<f32> for Vector2 {
     type Output = Self;
+    #[inline(always)]
     fn mul(self, rhs: f32) -> Self::Output {
         Self {
             x: self.x * rhs,
@@ -2109,11 +2221,14 @@ impl std::ops::Mul<f32> for Vector2 {
         }
     }
 }
+#[cfg(not(feature = "raylib"))]
 impl Vector2 {
+    #[inline(always)]
     pub const fn dot(self, other: Vector2) -> f32 {
         self.x*other.x + self.y*other.y
     }
 
+    #[inline(always)]
     pub const fn length_sqr(self) -> f32 {
         self.dot(self)
     }

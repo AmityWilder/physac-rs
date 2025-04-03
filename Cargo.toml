@@ -7,7 +7,7 @@ edition = "2024"
 raylib = { version = "*", optional = true }
 
 [features]
-default = []
+default = ["raylib"]
 raylib = ["dep:raylib"]
 no_threads = []
 debug = []
