@@ -165,7 +165,7 @@ impl<const MAX_VERTICES: usize> Default for PolygonData<MAX_VERTICES> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct PhysicsShape<const MAX_VERTICES: usize> {
     /// Physics shape type (circle or polygon)
     pub kind: PhysicsShapeType,
