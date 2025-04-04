@@ -77,6 +77,8 @@
 *
 **********************************************************************************************/
 
+use arrayvec::ArrayVec;
+
 #[cfg(feature = "raylib")]
 use raylib::prelude::Vector2;
 
@@ -105,15 +107,15 @@ use std::{
 //----------------------------------------------------------------------------------
 // Defines and Macros
 //----------------------------------------------------------------------------------
-pub const PHYSAC_MAX_BODIES:      u32 = 64;
-pub const PHYSAC_MAX_MANIFOLDS:   u32 = 4096;
-pub const PHYSAC_MAX_VERTICES:    u32 = 24;
-pub const PHYSAC_CIRCLE_VERTICES: u32 = 24;
+pub const DEFAULT_MAX_BODIES:      usize = 64;
+pub const DEFAULT_MAX_MANIFOLDS:   usize = 4096;
+pub const DEFAULT_MAX_VERTICES:    usize = 24;
+pub const DEFAULT_CIRCLE_VERTICES: usize = 24;
 
-pub const PHYSAC_FIXED_TIME:             f32 = 1.0/60.0;
-pub const PHYSAC_COLLISION_ITERATIONS:   u32 = 20;
-pub const PHYSAC_PENETRATION_ALLOWANCE:  f32 = 0.05;
-pub const PHYSAC_PENETRATION_CORRECTION: f32 = 0.4;
+pub const DEFAULT_FIXED_TIME:             f32   = 1.0/60.0;
+pub const DEFAULT_COLLISION_ITERATIONS:   usize = 20;
+pub const DEFAULT_PENETRATION_ALLOWANCE:  f32   = 0.05;
+pub const DEFAULT_PENETRATION_CORRECTION: f32   = 0.4;
 
 use std::f32::consts::PI;
 pub const DEG2RAD: f32 = PI/180.0;
@@ -141,125 +143,102 @@ pub struct Mat2 {
     pub m11: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct PolygonData {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PolygonData<const MAX_VERTICES: usize> {
     /// Current used vertex and normals count
-    pub vertex_count: u32,
+    pub vertex_count: usize,
 
     /// Polygon vertex positions vectors
-    pub positions: [Vector2; PHYSAC_MAX_VERTICES as usize],
+    pub positions: [Vector2; MAX_VERTICES],
 
     /// Polygon vertex normals vectors
-    pub normals: [Vector2; PHYSAC_MAX_VERTICES as usize],
+    pub normals: [Vector2; MAX_VERTICES],
+}
+
+impl<const MAX_VERTICES: usize> Default for PolygonData<MAX_VERTICES> {
+    fn default() -> Self {
+        Self {
+            vertex_count: 0,
+            positions: [const { Vector2::zero() }; MAX_VERTICES],
+            normals: [const { Vector2::zero() }; MAX_VERTICES],
+        }
+    }
 }
 
 #[derive(Debug, Default)]
-pub struct PhysicsShape {
+pub struct PhysicsShape<const MAX_VERTICES: usize> {
     /// Physics shape type (circle or polygon)
     pub kind: PhysicsShapeType,
-
-    /// Shape physics body reference
-    pub body: PhysicsBody,
-
     /// Circle shape radius (used for circle shapes)
     pub radius: f32,
-
     /// Vertices transform matrix 2x2
     pub transform: Mat2,
-
     /// Polygon shape vertices position and normals data (just used for polygon shapes)
-    pub vertex_data: PolygonData,
+    pub vertex_data: PolygonData<MAX_VERTICES>,
 }
 
 #[derive(Debug, Default)]
-pub struct PhysicsBodyData {
+pub struct PhysicsBodyData<const MAX_VERTICES: usize> {
     /// Reference unique identifier
     pub id: u32,
-
     /// Enabled dynamics state (collisions are calculated anyway)
     pub enabled: bool,
-
     /// Physics body shape pivot
     pub position: Vector2,
-
     /// Current linear velocity applied to position
     pub velocity: Vector2,
-
     /// Current linear force (reset to 0 every step)
     pub force: Vector2,
-
     /// Current angular velocity applied to orient
     pub angular_velocity: f32,
-
     /// Current angular force (reset to 0 every step)
     pub torque: f32,
-
     /// Rotation in radians
     pub orient: f32,
-
     /// Moment of inertia
     pub inertia: f32,
-
     /// Inverse value of inertia
     pub inverse_inertia: f32,
-
     /// Physics body mass
     pub mass: f32,
-
     /// Inverse value of mass
     pub inverse_mass: f32,
-
     /// Friction when the body has not movement (0 to 1)
     pub static_friction: f32,
-
     /// Friction when the body has movement (0 to 1)
     pub dynamic_friction: f32,
-
     /// Restitution coefficient of the body (0 to 1)
     pub restitution: f32,
-
     /// Apply gravity force to dynamics
     pub use_gravity: bool,
-
     /// Physics grounded on other body state
     pub is_grounded: bool,
-
     /// Physics rotation constraint
     pub freeze_orient: bool,
-
     /// Physics body shape information (type, radius, vertices, normals)
-    pub shape: PhysicsShape,
+    pub shape: PhysicsShape<MAX_VERTICES>,
 }
 
 #[derive(Debug, Default)]
-pub struct PhysicsManifoldData {
+pub struct PhysicsManifoldData<const MAX_VERTICES: usize> {
     /// Reference unique identifier
     pub id: u32,
-
     /// Manifold first physics body reference
-    pub body_a: PhysicsBody,
-
+    pub body_a: PhysicsBody<MAX_VERTICES>,
     /// Manifold second physics body reference
-    pub body_b: PhysicsBody,
-
+    pub body_b: PhysicsBody<MAX_VERTICES>,
     /// Depth of penetration from collision
     pub penetration: f32,
-
     /// Normal direction vector from 'a' to 'b'
     pub normal: Vector2,
-
     /// Points of contact during collision
     pub contacts: [Vector2; 2],
-
     /// Current collision number of contacts
-    pub contacts_count: u32,
-
+    pub contacts_count: usize,
     /// Mixed restitution during collision
     pub restitution: f32,
-
     /// Mixed dynamic friction during collision
     pub dynamic_friction: f32,
-
     /// Mixed static friction during collision
     pub static_friction: f32,
 }
@@ -303,14 +282,14 @@ pub mod rc {
     }
 
     #[derive(Debug, Clone)]
-    pub struct StrongPhysicsBody(
+    pub struct StrongPhysicsBody<const MAX_VERTICES: usize>(
         #[cfg(not(feature = "no_threads"))]
-        Arc<RwLock<PhysicsBodyData>>,
+        Arc<RwLock<PhysicsBodyData<MAX_VERTICES>>>,
         #[cfg(feature = "no_threads")]
-        Rc<RefCell<PhysicsBodyData>>,
+        Rc<RefCell<PhysicsBodyData<MAX_VERTICES>>>,
     );
-    impl StrongPhysicsBody {
-        pub(super) fn new(data: PhysicsBodyData) -> Self {
+    impl<const MAX_VERTICES: usize> StrongPhysicsBody<MAX_VERTICES> {
+        pub(super) fn new(data: PhysicsBodyData<MAX_VERTICES>) -> Self {
             Self(
                 #[cfg(not(feature = "no_threads"))]
                 Arc::new(RwLock::new(data)),
@@ -320,7 +299,7 @@ pub mod rc {
         }
 
         /// Get a weak body from a strong one
-        pub fn downgrade(&self) -> PhysicsBody {
+        pub fn downgrade(&self) -> PhysicsBody<MAX_VERTICES> {
             PhysicsBody(
                 #[cfg(not(feature = "no_threads"))]
                 Arc::downgrade(&self.0),
@@ -330,20 +309,24 @@ pub mod rc {
         }
 
         /// Get a temporary reference to the body
-        pub fn borrow(&self) -> PhysacReadGuard<'_, PhysicsBodyData> {
+        ///
+        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        pub fn borrow(&self) -> PhysacReadGuard<'_, PhysicsBodyData<MAX_VERTICES>> {
             PhysacReadGuard(
                 #[cfg(not(feature = "no_threads"))]
-                self.0.read().unwrap(),
+                self.0.read().expect("thread poison recovery is not supported"),
                 #[cfg(feature = "no_threads")]
                 self.0.borrow(),
             )
         }
 
         /// Get a temporary mutable reference to the body
-        pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, PhysicsBodyData> {
+        ///
+        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, PhysicsBodyData<MAX_VERTICES>> {
             PhysacWriteGuard(
                 #[cfg(not(feature = "no_threads"))]
-                self.0.write().unwrap(),
+                self.0.write().expect("thread poison recovery is not supported"),
                 #[cfg(feature = "no_threads")]
                 self.0.borrow_mut(),
             )
@@ -352,33 +335,38 @@ pub mod rc {
 
     /// Previously defined to be used in PhysicsShape struct as circular dependencies
     #[derive(Debug, Clone, Default)]
-    pub struct PhysicsBody(
+    pub struct PhysicsBody<const MAX_VERTICES: usize>(
         #[cfg(not(feature = "no_threads"))]
-        Weak<RwLock<PhysicsBodyData>>,
+        Weak<RwLock<PhysicsBodyData<MAX_VERTICES>>>,
         #[cfg(feature = "no_threads")]
-        Weak<RefCell<PhysicsBodyData>>,
+        Weak<RefCell<PhysicsBodyData<MAX_VERTICES>>>,
     );
-    impl PhysicsBody {
+    impl<const MAX_VERTICES: usize> PhysicsBody<MAX_VERTICES> {
         /// Constructs a weak body with no reference
         pub fn new() -> Self {
             Self(Weak::new())
         }
 
         /// Try to get a strong body from a weak one
-        pub fn upgrade(&self) -> Option<StrongPhysicsBody> {
+        ///
+        /// Returns [`None`] if the body has been destroyed
+        ///
+        /// **Note:** Holding onto a `StrongPhysicsBody` extends the physics body's lifetime, but it will stop
+        /// receiving physics ticks once it has been destroyed--even if you are still holding onto one of these
+        pub fn upgrade(&self) -> Option<StrongPhysicsBody<MAX_VERTICES>> {
             self.0.upgrade().map(|body| StrongPhysicsBody(body))
         }
     }
 
     #[derive(Debug, Clone)]
-    pub struct StrongPhysicsManifold(
+    pub struct StrongPhysicsManifold<const MAX_VERTICES: usize>(
         #[cfg(not(feature = "no_threads"))]
-        Arc<RwLock<PhysicsManifoldData>>,
+        Arc<RwLock<PhysicsManifoldData<MAX_VERTICES>>>,
         #[cfg(feature = "no_threads")]
-        Rc<RefCell<PhysicsManifoldData>>,
+        Rc<RefCell<PhysicsManifoldData<MAX_VERTICES>>>,
     );
-    impl StrongPhysicsManifold {
-        pub(super) fn new(data: PhysicsManifoldData) -> Self {
+    impl<const MAX_VERTICES: usize> StrongPhysicsManifold<MAX_VERTICES> {
+        pub(super) fn new(data: PhysicsManifoldData<MAX_VERTICES>) -> Self {
             Self(
                 #[cfg(not(feature = "no_threads"))]
                 Arc::new(RwLock::new(data)),
@@ -388,7 +376,7 @@ pub mod rc {
         }
 
         /// Get a weak manifold from a strong one
-        pub fn downgrade(&self) -> PhysicsManifold {
+        pub fn downgrade(&self) -> PhysicsManifold<MAX_VERTICES> {
             PhysicsManifold(
                 #[cfg(not(feature = "no_threads"))]
                 Arc::downgrade(&self.0),
@@ -398,20 +386,20 @@ pub mod rc {
         }
 
         /// Get a temporary reference to the manifold
-        pub fn borrow(&self) -> PhysacReadGuard<'_, PhysicsManifoldData> {
+        pub fn borrow(&self) -> PhysacReadGuard<'_, PhysicsManifoldData<MAX_VERTICES>> {
             PhysacReadGuard(
                 #[cfg(not(feature = "no_threads"))]
-                self.0.read().unwrap(),
+                self.0.read().expect("thread poison recovery is not supported"),
                 #[cfg(feature = "no_threads")]
                 self.0.borrow(),
             )
         }
 
         /// Get a temporary mutable reference to the manifold
-        pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, PhysicsManifoldData> {
+        pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, PhysicsManifoldData<MAX_VERTICES>> {
             PhysacWriteGuard(
                 #[cfg(not(feature = "no_threads"))]
-                self.0.write().unwrap(),
+                self.0.write().expect("thread poison recovery is not supported"),
                 #[cfg(feature = "no_threads")]
                 self.0.borrow_mut(),
             )
@@ -419,20 +407,20 @@ pub mod rc {
     }
 
     #[derive(Debug, Clone, Default)]
-    pub struct PhysicsManifold(
+    pub struct PhysicsManifold<const MAX_VERTICES: usize>(
         #[cfg(not(feature = "no_threads"))]
-        Weak<RwLock<PhysicsManifoldData>>,
+        Weak<RwLock<PhysicsManifoldData<MAX_VERTICES>>>,
         #[cfg(feature = "no_threads")]
-        Weak<RefCell<PhysicsManifoldData>>,
+        Weak<RefCell<PhysicsManifoldData<MAX_VERTICES>>>,
     );
-    impl PhysicsManifold {
+    impl<const MAX_VERTICES: usize> PhysicsManifold<MAX_VERTICES> {
         /// Constructs a weak manifold with no reference
-        pub fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self(Weak::new())
         }
 
         /// Try to get a strong manifold from a weak one
-        pub fn upgrade(&self) -> Option<StrongPhysicsManifold> {
+        pub fn upgrade(&self) -> Option<StrongPhysicsManifold<MAX_VERTICES>> {
             self.0.upgrade().map(|contact| StrongPhysicsManifold(contact))
         }
     }
@@ -453,7 +441,7 @@ pub const PHYSAC_K: f32 = 1.0/3.0;
 //----------------------------------------------------------------------------------
 // Global Variables Definition
 //----------------------------------------------------------------------------------
-pub struct Physac {
+pub struct Physac<const MAX_BODIES: usize, const MAX_MANIFOLDS: usize, const MAX_VERTICES: usize> {
     #[cfg(not(feature = "no_threads"))]
     /// Physics thread
     physics_thread: Option<thread::JoinHandle<()>>,
@@ -476,25 +464,29 @@ pub struct Physac {
     /// Physics world gravity force
     gravity_force: Vector2,
     /// Physics bodies pointers array
-    bodies: [Option<StrongPhysicsBody>; PHYSAC_MAX_BODIES as usize],
-    /// Physics world current bodies counter
-    physics_bodies_count: u32,
+    bodies: ArrayVec<StrongPhysicsBody<MAX_VERTICES>, MAX_BODIES>,
     /// Physics bodies pointers array
-    contacts: [Option<StrongPhysicsManifold>; PHYSAC_MAX_MANIFOLDS as usize],
-    /// Physics world current manifolds counter
-    physics_manifolds_count: u32,
+    contacts: ArrayVec<StrongPhysicsManifold<MAX_VERTICES>, MAX_MANIFOLDS>,
 }
 
-pub struct PhysacHandle(
+pub struct PhysacHandle<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+>(
     #[cfg(not(feature = "no_threads"))]
-    Arc<RwLock<Physac>>,
+    Arc<RwLock<Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>>>,
     #[cfg(feature = "no_threads")]
-    Physac,
+    Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>,
 );
-impl Drop for PhysacHandle {
+impl<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+    > Drop for PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
     fn drop(&mut self) {
         #[cfg(not(feature = "no_threads"))]
-        self.0.write().unwrap().close_physics();
+        self.0.write().expect("thread poison recovery is not supported").close_physics();
         #[cfg(feature = "no_threads")]
         self.0.close_physics();
     }
@@ -504,7 +496,12 @@ impl Drop for PhysacHandle {
 // Module Functions Definition
 //----------------------------------------------------------------------------------
 /// Initializes physics values, pointers and creates physics loop thread
-pub fn init_physics() -> PhysacHandle {
+pub fn init_physics<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+    const COLLISION_ITERATIONS: usize,
+>() -> PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
     let mut phys = Physac {
         #[cfg(not(feature = "no_threads"))]
         physics_thread: None,
@@ -516,10 +513,8 @@ pub fn init_physics() -> PhysacHandle {
         accumulator: 0.0,
         steps_count: 0,
         gravity_force: Vector2 { x: 0.0, y: 9.81 },
-        bodies: [const { None }; PHYSAC_MAX_BODIES as usize],
-        physics_bodies_count: 0,
-        contacts: [const { None }; PHYSAC_MAX_MANIFOLDS as usize],
-        physics_manifolds_count: 0,
+        bodies: ArrayVec::new(),
+        contacts: ArrayVec::new(),
     };
 
     // Initialize high resolution timer
@@ -536,8 +531,8 @@ pub fn init_physics() -> PhysacHandle {
         // NOTE: if defined, user will need to create a thread for PhysicsThread function manually
         // Create physics thread using POSIXS thread libraries
         let phys_clone = ph.0.clone();
-        let thread_handle = thread::spawn(move || physics_loop(phys_clone));
-        ph.0.write().unwrap().physics_thread = Some(thread_handle);
+        let thread_handle = thread::spawn(move || physics_loop::<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES, COLLISION_ITERATIONS>(phys_clone));
+        ph.0.write().expect("thread poison recovery is not supported").physics_thread = Some(thread_handle);
     }
 
     if cfg!(feature = "debug") {
@@ -547,12 +542,16 @@ pub fn init_physics() -> PhysacHandle {
     ph
 }
 
-impl PhysacHandle {
+impl<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+> PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
     /// Returns true if physics thread is currently enabled
     #[inline]
     pub fn is_physics_enabled(&self) -> bool {
         #[cfg(not(feature = "no_threads"))]
-        let phys = self.0.read().unwrap();
+        let phys = self.0.read().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &self.0;
         phys.is_physics_enabled()
@@ -562,7 +561,7 @@ impl PhysacHandle {
     #[inline]
     pub fn set_physics_gravity(&mut self, x: f32, y: f32) {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.set_physics_gravity(x, y)
@@ -570,9 +569,9 @@ impl PhysacHandle {
 
     /// Creates a new circle physics body with generic parameters
     #[inline]
-    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody<MAX_VERTICES> {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.create_physics_body_circle(pos, radius, density)
@@ -580,9 +579,9 @@ impl PhysacHandle {
 
     /// Creates a new rectangle physics body with generic parameters
     #[inline]
-    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody<MAX_VERTICES> {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.create_physics_body_rectangle(pos, width, height, density)
@@ -590,9 +589,9 @@ impl PhysacHandle {
 
     /// Creates a new polygon physics body with generic parameters
     #[inline]
-    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: u32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: usize, density: f32) -> PhysicsBody<MAX_VERTICES> {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.create_physics_body_polygon(pos, radius, sides, density)
@@ -600,9 +599,9 @@ impl PhysacHandle {
 
     /// Shatters a polygon shape physics body to little physics bodies with explosion force
     #[inline]
-    pub fn physics_shatter(&mut self, body: &PhysicsBody, position: Vector2, force: f32) {
+    pub fn physics_shatter(&mut self, body: &PhysicsBody<MAX_VERTICES>, position: Vector2, force: f32) {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.physics_shatter(body, position, force)
@@ -610,9 +609,9 @@ impl PhysacHandle {
 
     /// Returns the current amount of created physics bodies
     #[inline]
-    pub fn get_physics_bodies_count(&self) -> u32 {
+    pub fn get_physics_bodies_count(&self) -> usize {
         #[cfg(not(feature = "no_threads"))]
-        let phys = self.0.read().unwrap();
+        let phys = self.0.read().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &self.0;
         phys.get_physics_bodies_count()
@@ -624,9 +623,9 @@ impl PhysacHandle {
     ///
     /// May panic if the index is out of bounds.
     #[inline]
-    pub fn get_physics_body(&self, index: u32) -> Option<PhysicsBody> {
+    pub fn get_physics_body(&self, index: usize) -> Option<PhysicsBody<MAX_VERTICES>> {
         #[cfg(not(feature = "no_threads"))]
-        let phys = self.0.read().unwrap();
+        let phys = self.0.read().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &self.0;
         phys.get_physics_body(index)
@@ -638,9 +637,9 @@ impl PhysacHandle {
     ///
     /// May panic if the index is out of bounds.
     #[inline]
-    pub fn get_physics_shape_type(&self, index: u32) -> Option<PhysicsShapeType> {
+    pub fn get_physics_shape_type(&self, index: usize) -> Option<PhysicsShapeType> {
         #[cfg(not(feature = "no_threads"))]
-        let phys = self.0.read().unwrap();
+        let phys = self.0.read().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &self.0;
         phys.get_physics_shape_type(index)
@@ -648,9 +647,9 @@ impl PhysacHandle {
 
     /// Returns the amount of vertices of a physics body shape
     #[inline]
-    pub fn get_physics_shape_vertices_count(&self, index: u32) -> u32 {
+    pub fn get_physics_shape_vertices_count(&self, index: usize) -> usize {
         #[cfg(not(feature = "no_threads"))]
-        let phys = self.0.read().unwrap();
+        let phys = self.0.read().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &self.0;
         phys.get_physics_shape_vertices_count(index)
@@ -658,9 +657,9 @@ impl PhysacHandle {
 
     /// Unitializes and destroys a physics body
     #[inline]
-    pub fn destroy_physics_body(&mut self, body: PhysicsBody) {
+    pub fn destroy_physics_body(&mut self, body: PhysicsBody<MAX_VERTICES>) {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.destroy_physics_body(body)
@@ -674,25 +673,29 @@ impl PhysacHandle {
 
     /// Wrapper to ensure PhysicsStep is run with at a fixed time step
     #[inline]
-    pub fn run_physics_step(&mut self) {
+    pub fn run_physics_step<const COLLISION_ITERATIONS: usize>(&mut self) {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
-        phys.run_physics_step()
+        phys.run_physics_step::<COLLISION_ITERATIONS>()
     }
 
     #[inline]
     pub fn set_physics_time_step(&mut self, delta: f64) {
         #[cfg(not(feature = "no_threads"))]
-        let mut phys = self.0.write().unwrap();
+        let mut phys = self.0.write().expect("thread poison recovery is not supported");
         #[cfg(feature = "no_threads")]
         let phys = &mut self.0;
         phys.set_physics_time_step(delta)
     }
 }
 
-impl Physac {
+impl<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+> Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
     /// Returns true if physics thread is currently enabled
     pub fn is_physics_enabled(&self) -> bool {
         self.physics_thread_enabled
@@ -705,7 +708,7 @@ impl Physac {
     }
 
     /// Creates a new circle physics body with generic parameters
-    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> PhysicsBody<MAX_VERTICES> {
         let mut new_weak_body = PhysicsBody::new();
         let new_body = StrongPhysicsBody::new(PhysicsBodyData::default());
 
@@ -723,7 +726,6 @@ impl Physac {
             new_body_data.torque = 0.0;
             new_body_data.orient = 0.0;
             new_body_data.shape.kind = PHYSICS_CIRCLE;
-            new_body_data.shape.body = new_weak_body.clone();
             new_body_data.shape.radius = radius;
             new_body_data.shape.transform = Mat2::radians(0.0);
             new_body_data.shape.vertex_data = PolygonData::default();
@@ -742,8 +744,7 @@ impl Physac {
             drop(new_body_data);
 
             // Add new body to bodies pointers array and update bodies count
-            self.bodies[self.physics_bodies_count as usize] = Some(new_body);
-            self.physics_bodies_count += 1;
+            self.bodies.push(new_body);
 
             if cfg!(feature = "debug") {
                 println!("[PHYSAC] created polygon physics body id {}", new_id);
@@ -758,7 +759,7 @@ impl Physac {
     }
 
     /// Creates a new rectangle physics body with generic parameters
-    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> PhysicsBody<MAX_VERTICES> {
         let mut new_weak_body = PhysicsBody::new();
         let new_body = StrongPhysicsBody::new(PhysicsBodyData::default());
 
@@ -776,7 +777,6 @@ impl Physac {
             new_body_data.torque = 0.0;
             new_body_data.orient = 0.0;
             new_body_data.shape.kind = PHYSICS_POLYGON;
-            new_body_data.shape.body = new_weak_body.clone();
             new_body_data.shape.radius = 0.0;
             new_body_data.shape.transform = Mat2::radians(0.0);
             new_body_data.shape.vertex_data = PolygonData::create_rectangle_polygon(pos, Vector2 { x: width, y: height });
@@ -788,9 +788,9 @@ impl Physac {
 
             for i in 0..new_body_data.shape.vertex_data.vertex_count {
                 // Triangle vertices, third vertex implied as (0, 0)
-                let p1 = new_body_data.shape.vertex_data.positions[i as usize];
+                let p1 = new_body_data.shape.vertex_data.positions[i];
                 let next_index = if (i + 1) < new_body_data.shape.vertex_data.vertex_count { i + 1 } else { 0 };
-                let p2 = new_body_data.shape.vertex_data.positions[next_index as usize];
+                let p2 = new_body_data.shape.vertex_data.positions[next_index];
 
                 #[allow(non_snake_case)]
                 let D = math_cross_vector2(p1, p2);
@@ -813,8 +813,8 @@ impl Physac {
             // Translate vertices to centroid (make the centroid (0, 0) for the polygon in model space)
             // Note: this is not really necessary
             for i in 0..new_body_data.shape.vertex_data.vertex_count {
-                new_body_data.shape.vertex_data.positions[i as usize].x -= center.x;
-                new_body_data.shape.vertex_data.positions[i as usize].y -= center.y;
+                new_body_data.shape.vertex_data.positions[i].x -= center.x;
+                new_body_data.shape.vertex_data.positions[i].y -= center.y;
             }
 
             new_body_data.mass = density*area;
@@ -831,8 +831,7 @@ impl Physac {
             drop(new_body_data);
 
             // Add new body to bodies pointers array and update bodies count
-            self.bodies[self.physics_bodies_count as usize] = Some(new_body);
-            self.physics_bodies_count += 1;
+            self.bodies.push(new_body);
 
             if cfg!(feature = "debug") {
                 println!("[PHYSAC] created polygon physics body id {}", new_id);
@@ -847,7 +846,7 @@ impl Physac {
     }
 
     /// Creates a new polygon physics body with generic parameters
-    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: u32, density: f32) -> PhysicsBody {
+    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: usize, density: f32) -> PhysicsBody<MAX_VERTICES> {
         let mut new_weak_body = PhysicsBody::new();
         let new_body = StrongPhysicsBody::new(PhysicsBodyData::default());
 
@@ -865,7 +864,6 @@ impl Physac {
             new_body_data.torque = 0.0;
             new_body_data.orient = 0.0;
             new_body_data.shape.kind = PHYSICS_POLYGON;
-            new_body_data.shape.body = new_weak_body.clone();
             new_body_data.shape.transform = Mat2::radians(0.0);
             new_body_data.shape.vertex_data = PolygonData::create_random_polygon(radius, sides);
 
@@ -876,9 +874,9 @@ impl Physac {
 
             for i in 0..new_body_data.shape.vertex_data.vertex_count {
                 // Triangle vertices, third vertex implied as (0, 0)
-                let position1 = new_body_data.shape.vertex_data.positions[i as usize];
+                let position1 = new_body_data.shape.vertex_data.positions[i];
                 let next_index = if (i + 1) < new_body_data.shape.vertex_data.vertex_count { i + 1 } else { 0 };
-                let position2 = new_body_data.shape.vertex_data.positions[next_index as usize];
+                let position2 = new_body_data.shape.vertex_data.positions[next_index];
 
                 let cross = math_cross_vector2(position1, position2);
                 let triangle_area = cross/2.0;
@@ -900,8 +898,8 @@ impl Physac {
             // Translate vertices to centroid (make the centroid (0, 0) for the polygon in model space)
             // Note: this is not really necessary
             for i in 0..new_body_data.shape.vertex_data.vertex_count {
-                new_body_data.shape.vertex_data.positions[i as usize].x -= center.x;
-                new_body_data.shape.vertex_data.positions[i as usize].y -= center.y;
+                new_body_data.shape.vertex_data.positions[i].x -= center.x;
+                new_body_data.shape.vertex_data.positions[i].y -= center.y;
             }
 
             new_body_data.mass = density*area;
@@ -918,8 +916,7 @@ impl Physac {
             drop(new_body_data);
 
             // Add new body to bodies pointers array and update bodies count
-            self.bodies[self.physics_bodies_count as usize] = Some(new_body);
-            self.physics_bodies_count += 1;
+            self.bodies.push(new_body);
 
             if cfg!(feature = "debug") {
                 println!("[PHYSAC] created polygon physics body id {}", new_id);
@@ -932,29 +929,9 @@ impl Physac {
 
         new_weak_body
     }
-}
 
-impl PhysicsBody {
-    /// Adds a force to a physics body
-    pub fn add_force(&mut self, force: Vector2) {
-        if let Some(body) = self.upgrade() {
-            let mut body = body.borrow_mut();
-            body.force = body.force + force;
-        }
-    }
-
-    /// Adds an angular force to a physics body
-    pub fn add_torque(&mut self, amount: f32) {
-        if let Some(body) = self.upgrade() {
-            let mut body = body.borrow_mut();
-            body.torque += amount;
-        }
-    }
-}
-
-impl Physac {
     /// Shatters a polygon shape physics body to little physics bodies with explosion force
-    pub fn physics_shatter(&mut self, body: &PhysicsBody, position: Vector2, force: f32) {
+    pub fn physics_shatter(&mut self, body: &PhysicsBody<MAX_VERTICES>, position: Vector2, force: f32) {
         if let Some(phys_body) = body.upgrade() {
             let body = phys_body.borrow_mut();
             if body.shape.kind == PHYSICS_POLYGON {
@@ -963,9 +940,9 @@ impl Physac {
 
                 for i in 0..vertex_data.vertex_count {
                     let position_a = body.position;
-                    let position_b = body.shape.transform.multiply_vector2(body.position + vertex_data.positions[i as usize]);
+                    let position_b = body.shape.transform.multiply_vector2(body.position + vertex_data.positions[i]);
                     let next_index = if (i + 1) < vertex_data.vertex_count { i + 1 } else { 0 };
-                    let position_c = body.shape.transform.multiply_vector2(body.position + vertex_data.positions[next_index as usize]);
+                    let position_c = body.shape.transform.multiply_vector2(body.position + vertex_data.positions[next_index]);
 
                     // Check collision between each triangle
                     let alpha = ((position_b.y - position_c.y)*(position.x - position_c.x) + (position_c.x - position_b.x)*(position.y - position_c.y))/
@@ -985,11 +962,11 @@ impl Physac {
                 if collision {
                     let count = vertex_data.vertex_count;
                     let body_pos = body.position;
-                    let mut vertices = vec![Vector2::zero(); count as usize];
+                    let mut vertices = vec![Vector2::zero(); count];
                     let trans = body.shape.transform;
 
                     for i in 0..count {
-                        vertices[i as usize] = vertex_data.positions[i as usize];
+                        vertices[i] = vertex_data.positions[i];
                     }
 
                     // Destroy shattered physics body
@@ -998,18 +975,19 @@ impl Physac {
 
                     for i in 0..count {
                         let next_index = if (i + 1) < count { i + 1 } else { 0 };
-                        let mut center = triangle_barycenter(vertices[i as usize], vertices[next_index as usize], Vector2::zero());
+                        let mut center = triangle_barycenter(vertices[i], vertices[next_index], Vector2::zero());
                         center = body_pos + center;
                         let offset = center - body_pos;
 
-                        let new_body = self.create_physics_body_polygon(center, 10.0, 3, 10.0).upgrade().unwrap();     // Create polygon physics body with relevant values
+                        // Create polygon physics body with relevant values
+                        let new_body = self.create_physics_body_polygon(center, 10.0, 3, 10.0).upgrade().expect("failed to create physics body");
                         let mut new_body_data = new_body.borrow_mut();
 
                         let mut new_data = PolygonData::default();
                         new_data.vertex_count = 3;
 
-                        new_data.positions[0] = vertices[i as usize] - offset;
-                        new_data.positions[1] = vertices[next_index as usize] - offset;
+                        new_data.positions[0] = vertices[i] - offset;
+                        new_data.positions[1] = vertices[next_index] - offset;
                         new_data.positions[2] = position - center;
 
                         // Separate vertices to avoid unnecessary physics collisions
@@ -1023,10 +1001,10 @@ impl Physac {
                         // Calculate polygon faces normals
                         for j in 0..new_data.vertex_count {
                             let next_vertex = if (j + 1) < new_data.vertex_count { j + 1 } else { 0 };
-                            let face = new_data.positions[next_vertex as usize] - new_data.positions[j as usize];
+                            let face = new_data.positions[next_vertex] - new_data.positions[j];
 
-                            new_data.normals[j as usize] = Vector2 { x: face.y, y: -face.x };
-                            math_normalize(&mut new_data.normals[j as usize]);
+                            new_data.normals[j] = Vector2 { x: face.y, y: -face.x };
+                            math_normalize(&mut new_data.normals[j]);
                         }
 
                         // Apply computed vertex data to new physics body shape
@@ -1040,9 +1018,9 @@ impl Physac {
 
                         for j in 0..new_body_data.shape.vertex_data.vertex_count {
                             // Triangle vertices, third vertex implied as (0, 0)
-                            let p1 = new_body_data.shape.vertex_data.positions[j as usize];
+                            let p1 = new_body_data.shape.vertex_data.positions[j];
                             let next_vertex = if (j + 1) < new_body_data.shape.vertex_data.vertex_count { j + 1 } else { 0 };
-                            let p2 = new_body_data.shape.vertex_data.positions[next_vertex as usize];
+                            let p2 = new_body_data.shape.vertex_data.positions[next_vertex];
 
                             #[allow(non_snake_case)]
                             let D = math_cross_vector2(p1, p2);
@@ -1094,8 +1072,8 @@ impl Physac {
     }
 
     /// Returns the current amount of created physics bodies
-    pub fn get_physics_bodies_count(&self) -> u32 {
-        self.physics_bodies_count
+    pub fn get_physics_bodies_count(&self) -> usize {
+        self.bodies.len()
     }
 
     /// Returns a physics body of the bodies pool at a specific index
@@ -1103,35 +1081,22 @@ impl Physac {
     /// # Panics
     ///
     /// May panic if the index is out of bounds.
-    pub fn get_physics_body(&self, index: u32) -> Option<PhysicsBody> {
-        if index < self.physics_bodies_count {
-            if self.bodies[index as usize].is_none() {
-                if cfg!(feature = "debug") {
-                    println!("[PHYSAC] error when trying to get a null reference physics body");
-                }
-            }
-        } else {
+    pub fn get_physics_body(&self, index: usize) -> Option<PhysicsBody<MAX_VERTICES>> {
+        if index >= self.bodies.len() {
             if cfg!(feature = "debug") {
                 println!("[PHYSAC] physics body index is out of bounds");
             }
         }
 
-        self.bodies[index as usize].as_ref().map(StrongPhysicsBody::downgrade)
+        self.bodies.get(index).map(StrongPhysicsBody::downgrade)
     }
 
     /// Returns the physics body shape type (PHYSICS_CIRCLE or PHYSICS_POLYGON)
-    pub fn get_physics_shape_type(&self, index: u32) -> Option<PhysicsShapeType> {
+    pub fn get_physics_shape_type(&self, index: usize) -> Option<PhysicsShapeType> {
         let mut result = None;
 
-        if index < self.physics_bodies_count {
-            if let Some(body) = self.bodies[index as usize].as_ref() {
-                let body = body.borrow();
-                result = Some(body.shape.kind);
-            } else {
-                if cfg!(feature = "debug") {
-                    println!("[PHYSAC] error when trying to get a null reference physics body");
-                }
-            }
+        if let Some(body) = self.bodies.get(index) {
+            result = Some(body.borrow().shape.kind);
         } else {
             if cfg!(feature = "debug") {
                 println!("[PHYSAC] physics body index is out of bounds");
@@ -1142,42 +1107,109 @@ impl Physac {
     }
 
     /// Returns the amount of vertices of a physics body shape
-    pub fn get_physics_shape_vertices_count(&self, index: u32) -> u32 {
+    pub fn get_physics_shape_vertices_count(&self, index: usize) -> usize {
         let mut result = 0;
 
-        if index < self.physics_bodies_count {
-            if let Some(body) = self.bodies[index as usize].as_ref() {
-                let body = body.borrow();
-                result = match body.shape.kind {
-                    PHYSICS_CIRCLE => PHYSAC_CIRCLE_VERTICES,
-                    PHYSICS_POLYGON => body.shape.vertex_data.vertex_count,
-                };
-            } else if cfg!(feature = "debug") {
-                println!("[PHYSAC] error when trying to get a null reference physics body");
-            }
+        if let Some(body) = self.bodies.get(index) {
+            let body = body.borrow();
+            result = match body.shape.kind {
+                PHYSICS_CIRCLE => DEFAULT_CIRCLE_VERTICES,
+                PHYSICS_POLYGON => body.shape.vertex_data.vertex_count,
+            };
         } else if cfg!(feature = "debug") {
             println!("[PHYSAC] physics body index is out of bounds");
         }
 
         result
     }
+
+    /// Unitializes and destroys a physics body
+    pub fn destroy_physics_body(&mut self, body: PhysicsBody<MAX_VERTICES>) {
+        if let Some(body) = body.upgrade() {
+            let id = body.borrow().id;
+
+            let index = self.bodies.iter().position(|body| body.borrow().id == id);
+
+            if let Some(index) = index {
+                // Free body allocated memory
+                drop(body);
+                self.bodies.remove(index);
+
+                if cfg!(feature = "debug") {
+                    println!("[PHYSAC] destroyed physics body id {}", id);
+                }
+            } else {
+                if cfg!(feature = "debug") {
+                    println!("[PHYSAC] Not possible to find body id {} in pointers array", id);
+                }
+            }
+        } else if cfg!(feature = "debug") {
+            println!("[PHYSAC] error trying to destroy a null referenced body");
+        }
+    }
+
+    /// Unitializes physics pointers and exits physics loop thread
+    pub fn close_physics(&mut self) {
+        // Exit physics loop thread
+        self.physics_thread_enabled = false;
+
+        #[cfg(not(feature = "no_threads"))] {
+            self.physics_thread
+                .take()
+                .expect("[PHYSAC] thread should exist if physics has been initialized")
+                .join()
+                .expect("[PHYSAC] physics thread failed to close");
+        }
+
+        // // Unitialize physics manifolds dynamic memory allocations
+        // for i in (0..self.physics_manifolds_count).rev() {
+        //     let manifold = self.contacts[i].as_ref().unwrap().downgrade();
+        //     self.destroy_physics_manifold(manifold);
+        // }
+
+        // // Unitialize physics bodies dynamic memory allocations
+        // for i in (0..self.physics_bodies_count).rev() {
+        //     let body = self.bodies[i].as_ref().unwrap().downgrade();
+        //     self.destroy_physics_body(body);
+        // }
+
+        if cfg!(feature = "debug") {
+            println!("[PHYSAC] physics module closed successfully");
+        }
+    }
 }
 
-impl PhysicsBody {
+impl<const MAX_VERTICES: usize> PhysicsBody<MAX_VERTICES> {
+    /// Adds a force to a physics body
+    pub fn add_force(&mut self, force: Vector2) {
+        if let Some(body) = self.upgrade() {
+            let mut body = body.borrow_mut();
+            body.force = body.force + force;
+        }
+    }
+
+    /// Adds an angular force to a physics body
+    pub fn add_torque(&mut self, amount: f32) {
+        if let Some(body) = self.upgrade() {
+            let mut body = body.borrow_mut();
+            body.torque += amount;
+        }
+    }
+
     /// Returns transformed position of a body shape (body position + vertex transformed position)
-    pub fn get_shape_vertex(&self, vertex: i32) -> Vector2 {
+    pub fn get_physics_shape_vertex(&self, vertex: usize) -> Vector2 {
         let mut position = Vector2 { x: 0.0, y: 0.0 };
 
         if let Some(body) = self.upgrade() {
             let body = body.borrow();
             match body.shape.kind {
                 PHYSICS_CIRCLE => {
-                    position.x = body.position.x + (360.0/PHYSAC_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).cos()*body.shape.radius;
-                    position.y = body.position.y + (360.0/PHYSAC_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).sin()*body.shape.radius;
+                    position.x = body.position.x + (360.0/DEFAULT_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).cos()*body.shape.radius;
+                    position.y = body.position.y + (360.0/DEFAULT_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).sin()*body.shape.radius;
                 }
                 PHYSICS_POLYGON => {
                     let vertex_data = body.shape.vertex_data;
-                    position = body.position + body.shape.transform.multiply_vector2(vertex_data.positions[vertex as usize]);
+                    position = body.position + body.shape.transform.multiply_vector2(vertex_data.positions[vertex]);
                 }
             }
         } else {
@@ -1203,93 +1235,23 @@ impl PhysicsBody {
     }
 }
 
-impl Physac {
-    /// Unitializes and destroys a physics body
-    pub fn destroy_physics_body(&mut self, body: PhysicsBody) {
-        if let Some(body) = body.upgrade() {
-            let id = body.borrow().id;
-            let mut index = None;
-
-            for i in 0..self.physics_bodies_count {
-                let body = self.bodies[i as usize].as_ref().unwrap();
-                if body.borrow().id == id {
-                    index = Some(i);
-                    break;
-                }
-            }
-
-            if index.is_none() {
-                if cfg!(feature = "debug") {
-                    println!("[PHYSAC] Not possible to find body id {} in pointers array", id);
-                }
-                return;
-            }
-            let index = index.unwrap();
-
-            // Free body allocated memory
-            drop(body);
-            self.bodies[index as usize] = None;
-
-            // Reorder physics bodies pointers array and its catched index
-            for i in index..self.physics_bodies_count {
-                if let ([.., curr], [next, ..]) = self.bodies.split_at_mut(i as usize) {
-                    std::mem::swap(curr, next);
-                }
-            }
-
-            // Update physics bodies count
-            self.physics_bodies_count -= 1;
-
-            if cfg!(feature = "debug") {
-                println!("[PHYSAC] destroyed physics body id {}", id);
-            }
-        } else if cfg!(feature = "debug") {
-            println!("[PHYSAC] error trying to destroy a null referenced body");
-        }
-    }
-
-    /// Unitializes physics pointers and exits physics loop thread
-    pub fn close_physics(&mut self) {
-        // Exit physics loop thread
-        self.physics_thread_enabled = false;
-
-        #[cfg(not(feature = "no_threads"))] {
-            self.physics_thread.take().unwrap().join().unwrap();
-        }
-
-        // Unitialize physics manifolds dynamic memory allocations
-        for i in (0..self.physics_manifolds_count).rev() {
-            let manifold = self.contacts[i as usize].as_ref().unwrap().downgrade();
-            self.destroy_physics_manifold(manifold);
-        }
-
-        // Unitialize physics bodies dynamic memory allocations
-        for i in (0..self.physics_bodies_count).rev() {
-            let body = self.bodies[i as usize].as_ref().unwrap().downgrade();
-            self.destroy_physics_body(body);
-        }
-
-        if cfg!(feature = "debug") {
-            println!("[PHYSAC] physics module closed successfully");
-        }
-    }
-}
-
 //----------------------------------------------------------------------------------
 // Module Internal Functions Definition
 //----------------------------------------------------------------------------------
-impl Physac {
+impl<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+> Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
     /// Finds a valid index for a new physics body initialization
     fn find_available_body_index(&self) -> Option<u32> {
         let mut index = None;
-        for i in 0..PHYSAC_MAX_BODIES {
+        for i in 0..MAX_BODIES as u32 {
             let mut current_id = i;
 
             // Check if current id already exist in other physics body
-            for k in 0..self.physics_bodies_count {
-                let body = self.bodies[k as usize].as_ref().unwrap(); // every body index < PHYSICS_BODIES_COUNT should be Some
-                let body = body.borrow();
-                if body.id == current_id {
+            for body in &self.bodies {
+                if body.borrow().id == current_id {
                     current_id += 1;
                     break;
                 }
@@ -1306,32 +1268,32 @@ impl Physac {
     }
 }
 
-impl PolygonData {
+impl<const MAX_VERTICES: usize> PolygonData<MAX_VERTICES> {
     /// Creates a random polygon shape with max vertex distance from polygon pivot
-    fn create_random_polygon(radius: f32, sides: u32) -> PolygonData {
+    fn create_random_polygon(radius: f32, sides: usize) -> PolygonData<MAX_VERTICES> {
         let mut data = PolygonData::default();
         data.vertex_count = sides;
 
         // Calculate polygon vertices positions
         for i in 0..data.vertex_count {
-            data.positions[i as usize].x = (360.0/sides as f32*i as f32*DEG2RAD as f32).cos()*radius;
-            data.positions[i as usize].y = (360.0/sides as f32*i as f32*DEG2RAD as f32).sin()*radius;
+            data.positions[i].x = (360.0/sides as f32*i as f32*DEG2RAD as f32).cos()*radius;
+            data.positions[i].y = (360.0/sides as f32*i as f32*DEG2RAD as f32).sin()*radius;
         }
 
         // Calculate polygon faces normals
         for i in 0..data.vertex_count {
             let next_index = if (i + 1) < sides { i + 1 } else { 0 };
-            let face = data.positions[next_index as usize] - data.positions[i as usize];
+            let face = data.positions[next_index] - data.positions[i];
 
-            data.normals[i as usize] = Vector2 { x: face.y, y: -face.x };
-            math_normalize(&mut data.normals[i as usize]);
+            data.normals[i] = Vector2 { x: face.y, y: -face.x };
+            math_normalize(&mut data.normals[i]);
         }
 
         data
     }
 
     /// Creates a rectangle polygon shape based on a min and max positions
-    fn create_rectangle_polygon(pos: Vector2, size: Vector2) -> PolygonData {
+    fn create_rectangle_polygon(pos: Vector2, size: Vector2) -> PolygonData<MAX_VERTICES> {
         let mut data = PolygonData::default();
         data.vertex_count = 4;
 
@@ -1344,10 +1306,10 @@ impl PolygonData {
         // Calculate polygon faces normals
         for i in 0..data.vertex_count {
             let next_index = if (i + 1) < data.vertex_count { i + 1 } else { 0 };
-            let face = data.positions[next_index as usize] - data.positions[i as usize];
+            let face = data.positions[next_index] - data.positions[i];
 
-            data.normals[i as usize] = Vector2 { x: face.y, y: -face.x };
-            math_normalize(&mut data.normals[i as usize]);
+            data.normals[i] = Vector2 { x: face.y, y: -face.x };
+            math_normalize(&mut data.normals[i]);
         }
 
         data
@@ -1356,142 +1318,116 @@ impl PolygonData {
 
 /// Physics loop thread function
 #[cfg(not(feature = "no_threads"))]
-fn physics_loop(phys: Arc<RwLock<Physac>>) {
+fn physics_loop<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+    const COLLISION_ITERATIONS: u32,
+> (phys: Arc<RwLock<Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>>>) {
     if cfg!(feature = "debug") {
         println!("[PHYSAC] physics thread created successfully");
     }
 
     // Initialize physics loop thread values
-    phys.write().unwrap().physics_thread_enabled = true;
+    { phys.write().expect("thread poison recovery is not supported").physics_thread_enabled = true; }
 
     // Physics update loop
-    while phys.read().unwrap().physics_thread_enabled {
-        phys.write().unwrap().run_physics_step();
+    while phys.read().expect("thread poison recovery is not supported").physics_thread_enabled {
+        { phys.write().expect("thread poison recovery is not supported").run_physics_step::<COLLISION_ITERATIONS>(); }
 
-        let req = Duration::from_nanos((PHYSAC_FIXED_TIME*1000.0*1000.0) as u64);
+        let req = Duration::from_secs_f64(1.0/60.0);
 
         std::thread::sleep(req);
     }
 }
 
-impl Physac {
+impl<
+    const MAX_BODIES: usize,
+    const MAX_MANIFOLDS: usize,
+    const MAX_VERTICES: usize,
+> Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
     /// Physics steps calculations (dynamics, collisions and position corrections)
-    fn physics_step(&mut self) {
+    fn physics_step<const COLLISION_ITERATIONS: usize>(&mut self) {
         // Update current steps count
         self.steps_count += 1;
 
         // Clear previous generated collisions information
-        for i in (0..self.physics_manifolds_count).rev() {
-            let manifold = self.contacts[i as usize].as_ref();
-
-            if let Some(manifold) = manifold {
-                self.destroy_physics_manifold(manifold.downgrade());
-            }
-        }
+        self.contacts.clear();
 
         // Reset physics bodies grounded state
-        for i in 0..self.physics_bodies_count {
-            let body = self.bodies[i as usize].as_ref().unwrap();
+        for body in &self.bodies {
             body.borrow_mut().is_grounded = false;
         }
 
         // Generate new collision information
-        for i in 0..self.physics_bodies_count {
-            if self.bodies[i as usize].is_some() {
-                for j in (i + 1)..self.physics_bodies_count {
-                    if let (front_slice, [Some(body_b), ..]) = self.bodies.split_at(j as usize) {
-                        let body_a = front_slice[i as usize].as_ref().unwrap();
+        for i in 0..self.bodies.len() {
+            for j in (i + 1)..self.bodies.len() {
+                let body_a = self.bodies[i].clone();
+                let body_b = self.bodies[j].clone();
+                if (body_a.borrow().inverse_mass == 0.0) && (body_b.borrow().inverse_mass == 0.0) {
+                    continue;
+                }
 
-                        if (body_a.borrow().inverse_mass == 0.0) && (body_b.borrow().inverse_mass == 0.0) {
-                            continue;
-                        }
+                let manifold = self.create_physics_manifold(body_a.downgrade(), body_b.downgrade()).upgrade().unwrap();
+                let mut manifold_data = manifold.borrow_mut();
+                manifold_data.solve(
+                    &mut *body_a.borrow_mut(),
+                    &mut *body_b.borrow_mut(),
+                );
 
-                        let body_a = body_a.downgrade();
-                        let body_b = body_b.downgrade();
-
-                        let manifold = self.create_physics_manifold(&body_a, &body_b).upgrade().unwrap();
-                        let mut manifold_data = manifold.borrow_mut();
-                        manifold_data.solve();
-
-                        if manifold_data.contacts_count > 0 {
-                            // Create a new manifold with same information as previously solved manifold and add it to the manifolds pool last slot
-                            let new_manifold = self.create_physics_manifold(&body_a, &body_b).upgrade().unwrap();
-                            let mut new_manifold_data = new_manifold.borrow_mut();
-                            new_manifold_data.penetration = manifold_data.penetration;
-                            new_manifold_data.normal = manifold_data.normal;
-                            new_manifold_data.contacts[0] = manifold_data.contacts[0];
-                            new_manifold_data.contacts[1] = manifold_data.contacts[1];
-                            new_manifold_data.contacts_count = manifold_data.contacts_count;
-                            new_manifold_data.restitution = manifold_data.restitution;
-                            new_manifold_data.dynamic_friction = manifold_data.dynamic_friction;
-                            new_manifold_data.static_friction = manifold_data.static_friction;
-                        }
-                    }
+                if manifold_data.contacts_count > 0 {
+                    // Create a new manifold with same information as previously solved manifold and add it to the manifolds pool last slot
+                    let new_manifold = self.create_physics_manifold(body_a.downgrade(), body_b.downgrade()).upgrade().unwrap();
+                    let mut new_manifold_data = new_manifold.borrow_mut();
+                    new_manifold_data.penetration = manifold_data.penetration;
+                    new_manifold_data.normal = manifold_data.normal;
+                    new_manifold_data.contacts[0] = manifold_data.contacts[0];
+                    new_manifold_data.contacts[1] = manifold_data.contacts[1];
+                    new_manifold_data.contacts_count = manifold_data.contacts_count;
+                    new_manifold_data.restitution = manifold_data.restitution;
+                    new_manifold_data.dynamic_friction = manifold_data.dynamic_friction;
+                    new_manifold_data.static_friction = manifold_data.static_friction;
                 }
             }
         }
 
         // Integrate forces to physics bodies
-        for i in 0..self.physics_bodies_count {
-            let body = self.bodies[i as usize].as_ref();
-
-            if let Some(body) = body {
-                self.integrate_physics_forces(&mut *body.borrow_mut());
-            }
+        for body in &self.bodies {
+            self.integrate_physics_forces(&mut *body.borrow_mut());
         }
 
         // Initialize physics manifolds to solve collisions
-        for i in 0..self.physics_manifolds_count {
-            let manifold = self.contacts[i as usize].as_ref();
-
-            if let Some(manifold) = manifold {
-                self.initialize_physics_manifolds(&mut *manifold.borrow_mut());
-            }
+        for manifold in &self.contacts {
+            self.initialize_physics_manifolds(&mut *manifold.borrow_mut());
         }
 
         // Integrate physics collisions impulses to solve collisions
-        for _i in 0..PHYSAC_COLLISION_ITERATIONS {
-            for j in 0..self.physics_manifolds_count {
-                let manifold = self.contacts[j as usize].as_ref();
-
-                if let Some(manifold) = manifold {
-                    self.integrate_physics_impulses(&mut *manifold.borrow_mut());
-                }
+        for _ in 0..COLLISION_ITERATIONS as u32 {
+            for manifold in &self.contacts {
+                self.integrate_physics_impulses(&mut *manifold.borrow_mut());
             }
         }
 
         // Integrate velocity to physics bodies
-        for i in 0..self.physics_bodies_count {
-            let body = self.bodies[i as usize].as_ref();
-
-            if let Some(body) = body {
-                self.integrate_physics_velocity(&mut *body.borrow_mut());
-            }
+        for body in &self.bodies {
+            self.integrate_physics_velocity(&mut *body.borrow_mut());
         }
 
         // Correct physics bodies positions based on manifolds collision information
-        for i in 0..self.physics_manifolds_count {
-            let manifold = self.contacts[i as usize].as_ref();
-
-            if let Some(manifold) = manifold {
-                self.correct_physics_positions(&mut *manifold.borrow_mut());
-            }
+        for manifold in &self.contacts {
+            self.correct_physics_positions(&mut *manifold.borrow_mut());
         }
 
         // Clear physics bodies forces
-        for i in 0..self.physics_bodies_count {
-            let body = self.bodies[i as usize].as_ref();
-
-            if let Some(body) = body {
-                let mut body = body.borrow_mut();
-                body.force = Vector2::zero();
-                body.torque = 0.0;
-            }
+        for body in &self.bodies {
+            let mut body = body.borrow_mut();
+            body.force = Vector2::zero();
+            body.torque = 0.0;
         }
     }
 
     /// Wrapper to ensure PhysicsStep is run with at a fixed time step
-    pub fn run_physics_step(&mut self) {
+    pub fn run_physics_step<const COLLISION_ITERATIONS: usize>(&mut self) {
         // Calculate current time
         self.current_time = self.get_curr_time();
 
@@ -1503,7 +1439,7 @@ impl Physac {
 
         // Fixed time stepping loop
         while self.accumulator >= self.delta_time {
-            self.physics_step();
+            self.physics_step::<COLLISION_ITERATIONS>();
             self.accumulator -= self.delta_time;
         }
 
@@ -1517,17 +1453,12 @@ impl Physac {
 
     /// Finds a valid index for a new manifold initialization
     fn find_available_manifold_index(&self) -> Option<u32> {
-        let id = self.physics_manifolds_count + 1;
-
-        if id >= PHYSAC_MAX_MANIFOLDS {
-            return None;
-        }
-
-        Some(id)
+        (self.contacts.len() as u32).checked_add(1)
+            .filter(|id| *id < MAX_MANIFOLDS as u32)
     }
 
     /// Creates a new physics manifold to solve collision
-    fn create_physics_manifold(&mut self, a: &PhysicsBody, b: &PhysicsBody) -> PhysicsManifold {
+    fn create_physics_manifold(&mut self, a: PhysicsBody<MAX_VERTICES>, b: PhysicsBody<MAX_VERTICES>) -> PhysicsManifold<MAX_VERTICES> {
         let mut new_weak_manifold = PhysicsManifold::new();
         let new_manifold = StrongPhysicsManifold::new(PhysicsManifoldData::default());
 
@@ -1538,8 +1469,8 @@ impl Physac {
 
             // Initialize new manifold with generic values
             new_manifold_data.id = new_id;
-            new_manifold_data.body_a = a.clone();
-            new_manifold_data.body_b = b.clone();
+            new_manifold_data.body_a = a;
+            new_manifold_data.body_b = b;
             new_manifold_data.penetration = 0.0;
             new_manifold_data.normal = Vector2::zero();
             new_manifold_data.contacts[0] = Vector2::zero();
@@ -1552,8 +1483,7 @@ impl Physac {
             drop(new_manifold_data);
 
             // Add new body to bodies pointers array and update bodies count
-            self.contacts[self.physics_manifolds_count as usize] = Some(new_manifold);
-            self.physics_manifolds_count += 1;
+            self.contacts.push(new_manifold);
         } else {
             if cfg!(feature = "debug") {
                 println!("[PHYSAC] new physics manifold creation failed because there is any available id to use");
@@ -1564,350 +1494,19 @@ impl Physac {
     }
 
     /// Unitializes and destroys a physics manifold
-    fn destroy_physics_manifold(&mut self, manifold: PhysicsManifold) {
-        if let Some(manifold) = manifold.upgrade() {
-            let id = manifold.borrow().id;
-            let mut index = None;
+    fn _destroy_physics_manifold(&mut self, id: u32) {
+        let index = self.contacts.iter()
+            .position(|contact| contact.borrow().id == id);
 
-            for i in 0..self.physics_manifolds_count {
-                let contact = self.contacts[i as usize].as_ref().unwrap();
-                if contact.borrow().id == id {
-                    index = Some(i);
-                    break;
-                }
-            }
-
-            if index.is_none() {
-                if cfg!(feature = "debug") {
-                    println!("[PHYSAC] Not possible to manifold id {} in pointers array", id);
-                }
-                return;
-            }
-            let index = index.unwrap();
-
-            // Free manifold allocated memory
-            drop(manifold);
-            self.contacts[index as usize] = None;
-
-            // Reorder physics manifolds pointers array and its catched index
-            for i in index..self.physics_manifolds_count {
-                if let ([.., curr], [next, ..]) = self.contacts.split_at_mut(i as usize) {
-                    std::mem::swap(curr, next);
-                }
-            }
-
-            // Update physics manifolds count
-            self.physics_manifolds_count -= 1;
+        if let Some(index) = index {
+            self.contacts.remove(index);
         } else if cfg!(feature = "debug") {
-            println!("[PHYSAC] error trying to destroy a null referenced manifold");
-        }
-    }
-}
-
-impl PhysicsManifoldData {
-    /// Solves a created physics manifold between two physics bodies
-    fn solve(&mut self) {
-        let body_a = self.body_a.upgrade().unwrap();
-        let body_b = self.body_b.upgrade().unwrap();
-
-        let     body_a = body_a.borrow();
-        let mut body_b = body_b.borrow_mut();
-
-        match body_a.shape.kind {
-            PHYSICS_CIRCLE => {
-                match body_b.shape.kind {
-                    PHYSICS_CIRCLE => self.solve_circle_to_circle(),
-                    PHYSICS_POLYGON => self.solve_circle_to_polygon(),
-                }
-            }
-            PHYSICS_POLYGON => {
-                match body_b.shape.kind {
-                    PHYSICS_CIRCLE => self.solve_polygon_to_circle(),
-                    PHYSICS_POLYGON => self.solve_polygon_to_polygon(),
-                }
-            }
-        }
-
-        // Update physics body grounded state if normal direction is down and grounded state is not set yet in previous manifolds
-        if !body_b.is_grounded {
-            body_b.is_grounded = self.normal.y < 0.0;
+            println!("[PHYSAC] Not possible to manifold id {} in pointers array", id);
         }
     }
 
-    /// Solves collision between two circle shape physics bodies
-    fn solve_circle_to_circle(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
-
-        if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
-            let mut body_a = body_a.borrow_mut();
-            let     body_b = body_b.borrow();
-
-            // Calculate translational vector, which is normal
-            let normal = body_b.position - body_a.position;
-
-            let dist_sqr = normal.length_sqr();
-            let radius = body_a.shape.radius + body_b.shape.radius;
-
-            // Check if circles are not in contact
-            if dist_sqr >= radius*radius {
-                self.contacts_count = 0;
-                return;
-            }
-
-            let distance = dist_sqr.sqrt();
-            self.contacts_count = 1;
-
-            if distance == 0.0 {
-                self.penetration = body_a.shape.radius;
-                self.normal = Vector2 { x: 1.0, y: 0.0 };
-                self.contacts[0] = body_a.position;
-            } else {
-                self.penetration = radius - distance;
-                self.normal = Vector2 { x: normal.x/distance, y: normal.y/distance }; // Faster than using MathNormalize() due to sqrt is already performed
-                self.contacts[0] = Vector2 {
-                    x: self.normal.x*body_a.shape.radius + body_a.position.x,
-                    y: self.normal.y*body_a.shape.radius + body_a.position.y,
-                };
-            }
-
-            // Update physics body grounded state if normal direction is down
-            if !body_a.is_grounded {
-                body_a.is_grounded = self.normal.y < 0.0;
-            }
-        }
-    }
-
-    /// Solves collision between a circle to a polygon shape physics bodies
-    fn solve_circle_to_polygon(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
-
-        if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
-            let mut body_a = body_a.borrow_mut();
-            let mut body_b = body_b.borrow_mut();
-
-            self.solve_different_shapes(&mut *body_a, &mut *body_b);
-        }
-    }
-
-    /// Solves collision between a circle to a polygon shape physics bodies
-    fn solve_polygon_to_circle(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
-
-        if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
-            let mut body_a = body_a.borrow_mut();
-            let mut body_b = body_b.borrow_mut();
-
-            self.solve_different_shapes(&mut *body_b, &mut *body_a);
-
-            self.normal.x *= -1.0;
-            self.normal.y *= -1.0;
-        }
-    }
-
-    /// Solve collision between two different types of shapes
-    fn solve_different_shapes(&mut self, body_a: &mut PhysicsBodyData, body_b: &mut PhysicsBodyData) {
-        self.contacts_count = 0;
-
-        // Transform circle center to polygon transform space
-        let mut center = body_a.position;
-        center = body_b.shape.transform.transpose().multiply_vector2(center - body_b.position);
-
-        // Find edge with minimum penetration
-        // It is the same concept as using support points in SolvePolygonToPolygon
-        let mut separation = f32::MIN;
-        let mut face_normal = 0;
-        let vertex_data = body_b.shape.vertex_data;
-
-        for i in 0..vertex_data.vertex_count {
-            let current_separation = vertex_data.normals[i as usize ].dot(center - vertex_data.positions[i as usize]);
-
-            if current_separation > body_a.shape.radius {
-                return;
-            }
-
-            if current_separation > separation {
-                separation = current_separation;
-                face_normal = i;
-            }
-        }
-
-        // Grab face's vertices
-        let mut v1 = vertex_data.positions[face_normal as usize];
-        let next_index = if (face_normal + 1) < vertex_data.vertex_count { face_normal + 1 } else { 0 };
-        let mut v2 = vertex_data.positions[next_index as usize];
-
-        // Check to see if center is within polygon
-        if separation < f32::EPSILON {
-            self.contacts_count = 1;
-            let normal = body_b.shape.transform.multiply_vector2(vertex_data.normals[face_normal as usize]);
-            self.normal = Vector2 { x: -normal.x, y: -normal.y };
-            self.contacts[0] = Vector2 { x: self.normal.x*body_a.shape.radius + body_a.position.x, y: self.normal.y*body_a.shape.radius + body_a.position.y };
-            self.penetration = body_a.shape.radius;
-            return;
-        }
-
-        // Determine which voronoi region of the edge center of circle lies within
-        let dot1 = (center - v1).dot(v2 - v1);
-        let dot2 = (center - v2).dot(v1 - v2);
-        self.penetration = body_a.shape.radius - separation;
-
-        if dot1 <= 0.0 { // Closest to v1
-            if dist_sqr(center, v1) > body_a.shape.radius*body_a.shape.radius {
-                return;
-            }
-
-            self.contacts_count = 1;
-            let mut normal = v1 - center;
-            normal = body_b.shape.transform.multiply_vector2(normal);
-            math_normalize(&mut normal);
-            self.normal = normal;
-            v1 = body_b.shape.transform.multiply_vector2(v1);
-            v1 = v1 + body_b.position;
-            self.contacts[0] = v1;
-        } else if dot2 <= 0.0 { // Closest to v2
-            if dist_sqr(center, v2) > body_a.shape.radius*body_a.shape.radius {
-                return;
-            }
-
-            self.contacts_count = 1;
-            let mut normal = v2 - center;
-            v2 = body_b.shape.transform.multiply_vector2(v2);
-            v2 = v2 + body_b.position;
-            self.contacts[0] = v2;
-            normal = body_b.shape.transform.multiply_vector2(normal);
-            math_normalize(&mut normal);
-            self.normal = normal;
-        } else { // Closest to face
-            let mut normal = vertex_data.normals[face_normal as usize];
-
-            if dist_sqr(center - v1, normal) > body_a.shape.radius {
-                return;
-            }
-
-            normal = body_b.shape.transform.multiply_vector2(normal);
-            self.normal = Vector2 { x: -normal.x, y: -normal.y };
-            self.contacts[0] = Vector2 { x: self.normal.x*body_a.shape.radius + body_a.position.x, y: self.normal.y*body_a.shape.radius + body_a.position.y };
-            self.contacts_count = 1;
-        }
-    }
-
-    /// Solves collision between two polygons shape physics bodies
-    fn solve_polygon_to_polygon(&mut self) {
-        let body_a = self.body_a.upgrade();
-        let body_b = self.body_b.upgrade();
-
-        if let (Some(body_a), Some(body_b)) = (body_a, body_b) {
-            let body_a = &body_a.borrow().shape;
-            let body_b = &body_b.borrow().shape;
-            self.contacts_count = 0;
-
-            // Check for separating axis with A shape's face planes
-            let mut face_a = 0;
-            let penetration_a = find_axis_least_penetration(&mut face_a, body_a, body_b);
-
-            if penetration_a >= 0.0 {
-                return;
-            }
-
-            // Check for separating axis with B shape's face planes
-            let mut face_b = 0;
-            let penetration_b = find_axis_least_penetration(&mut face_b, body_b, body_a);
-
-            if penetration_b >= 0.0 {
-                return;
-            }
-
-            let mut reference_index;
-            let mut flip = false;  // Always point from A shape to B shape
-
-            let ref_poly; // Reference
-            let inc_poly; // Incident
-
-            // Determine which shape contains reference face
-            if bias_greater_than(penetration_a, penetration_b) {
-                ref_poly = body_a;
-                inc_poly = body_b;
-                reference_index = face_a;
-            } else {
-                ref_poly = body_b;
-                inc_poly = body_a;
-                reference_index = face_b;
-                flip = true;
-            }
-
-            // World space incident face
-            let mut incident_face0 = Vector2::zero();
-            let mut incident_face1 = Vector2::zero();
-            find_incident_face(&mut incident_face0, &mut incident_face1, ref_poly, inc_poly, reference_index);
-
-            // Setup reference face vertices
-            let ref_data = ref_poly.vertex_data;
-            let mut v1 = ref_data.positions[reference_index as usize];
-            reference_index = if (reference_index + 1) < ref_data.vertex_count { reference_index + 1 } else { 0 };
-            let mut v2 = ref_data.positions[reference_index as usize];
-
-            // Transform vertices to world space
-            v1 = ref_poly.transform.multiply_vector2(v1);
-            v1 = v1 + ref_poly.body.upgrade().unwrap().borrow().position;
-            v2 = ref_poly.transform.multiply_vector2(v2);
-            v2 = v2 + ref_poly.body.upgrade().unwrap().borrow().position;
-
-            // Calculate reference face side normal in world space
-            let mut side_plane_normal = v2 - v1;
-            math_normalize(&mut side_plane_normal);
-
-            // Orthogonalize
-            let ref_face_normal = Vector2 { x: side_plane_normal.y, y: -side_plane_normal.x };
-            let ref_c = ref_face_normal.dot(v1);
-            let neg_side = side_plane_normal.dot(v1)*-1.0;
-            let pos_side = side_plane_normal.dot(v2);
-
-            // Clip incident face to reference face side planes (due to floating point error, possible to not have required points
-            if clip(-side_plane_normal, neg_side, &mut incident_face0, &mut incident_face1) < 2 {
-                return;
-            }
-
-            if clip(side_plane_normal, pos_side, &mut incident_face0, &mut incident_face1) < 2 {
-                return;
-            }
-
-            // Flip normal if required
-            self.normal = if flip { -ref_face_normal } else { ref_face_normal };
-
-            // Keep points behind reference face
-            let mut current_point = 0; // Clipped points behind reference face
-            let mut separation = ref_face_normal.dot(incident_face0) - ref_c;
-
-            if separation <= 0.0 {
-                self.contacts[current_point as usize] = incident_face0;
-                self.penetration = -separation;
-                current_point += 1;
-            } else {
-                self.penetration = 0.0;
-            }
-
-            separation = ref_face_normal.dot(incident_face1) - ref_c;
-
-            if separation <= 0.0 {
-                self.contacts[current_point as usize] = incident_face1;
-                self.penetration += -separation;
-                current_point += 1;
-
-                // Calculate total penetration average
-                self.penetration /= current_point as f32;
-            }
-
-            self.contacts_count = current_point;
-        }
-    }
-}
-
-impl Physac {
     /// Integrates physics forces into velocity
-    fn integrate_physics_forces(&self, body: &mut PhysicsBodyData) {
+    fn integrate_physics_forces(&self, body: &mut PhysicsBodyData<MAX_VERTICES>) {
         if (body.inverse_mass == 0.0) || !body.enabled {
             return;
         }
@@ -1926,7 +1525,7 @@ impl Physac {
     }
 
     /// Initializes physics manifolds to solve collisions
-    fn initialize_physics_manifolds(&self, manifold: &mut PhysicsManifoldData) {
+    fn initialize_physics_manifolds(&self, manifold: &mut PhysicsManifoldData<MAX_VERTICES>) {
         let body_a = manifold.body_a.upgrade();
         let body_b = manifold.body_b.upgrade();
 
@@ -1942,8 +1541,8 @@ impl Physac {
             for i in 0..manifold.contacts_count
             {
                 // Caculate radius from center of mass to contact
-                let radius_a = manifold.contacts[i as usize] - body_a.position;
-                let radius_b = manifold.contacts[i as usize] - body_b.position;
+                let radius_a = manifold.contacts[i] - body_a.position;
+                let radius_b = manifold.contacts[i] - body_b.position;
 
                 let cross_a = math_cross(body_a.angular_velocity, radius_a);
                 let cross_b = math_cross(body_b.angular_velocity, radius_b);
@@ -1965,7 +1564,7 @@ impl Physac {
     }
 
     /// Integrates physics collisions impulses to solve collisions
-    fn integrate_physics_impulses(&self, manifold: &mut PhysicsManifoldData) {
+    fn integrate_physics_impulses(&self, manifold: &mut PhysicsManifoldData<MAX_VERTICES>) {
         let body_a = manifold.body_a.upgrade();
         let body_b = manifold.body_b.upgrade();
 
@@ -1982,8 +1581,8 @@ impl Physac {
 
             for i in 0..manifold.contacts_count {
                 // Calculate radius from center of mass to contact
-                let radius_a = manifold.contacts[i as usize] - body_a.position;
-                let radius_b = manifold.contacts[i as usize] - body_b.position;
+                let radius_a = manifold.contacts[i] - body_a.position;
+                let radius_b = manifold.contacts[i] - body_b.position;
 
                 // Calculate relative velocity
                 let mut radius_v = Vector2::zero();
@@ -2081,7 +1680,7 @@ impl Physac {
     }
 
     /// Integrates physics velocity into position and forces
-    fn integrate_physics_velocity(&self, body: &mut PhysicsBodyData) {
+    fn integrate_physics_velocity(&self, body: &mut PhysicsBodyData<MAX_VERTICES>) {
         if !body.enabled {
             return;
         }
@@ -2100,7 +1699,7 @@ impl Physac {
     }
 
     /// Corrects physics bodies positions based on manifolds collision information
-    fn correct_physics_positions(&self, manifold: &mut PhysicsManifoldData) {
+    fn correct_physics_positions(&self, manifold: &mut PhysicsManifoldData<MAX_VERTICES>) {
         let body_a = manifold.body_a.upgrade();
         let body_b = manifold.body_b.upgrade();
 
@@ -2109,8 +1708,8 @@ impl Physac {
             let mut body_b = body_b.borrow_mut();
 
             let correction = Vector2 {
-                x: ((manifold.penetration - PHYSAC_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.x*PHYSAC_PENETRATION_CORRECTION,
-                y: ((manifold.penetration - PHYSAC_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.y*PHYSAC_PENETRATION_CORRECTION,
+                x: ((manifold.penetration - DEFAULT_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.x*DEFAULT_PENETRATION_CORRECTION,
+                y: ((manifold.penetration - DEFAULT_PENETRATION_ALLOWANCE).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.y*DEFAULT_PENETRATION_CORRECTION,
             };
 
             if body_a.enabled {
@@ -2124,16 +1723,297 @@ impl Physac {
             }
         }
     }
+
+    /// Initializes hi-resolution MONOTONIC timer
+    fn init_timer(&mut self) {
+        self.base_time = Instant::now(); // Get MONOTONIC clock time offset
+        self.start_time = self.get_curr_time(); // Get current time
+    }
+
+    /// Get hi-res MONOTONIC time measure in seconds
+    fn _get_time_count(&self) -> u64 {
+        self.base_time.elapsed().as_secs()
+    }
+
+    /// Get current time in milliseconds
+    fn get_curr_time(&self) -> f64 {
+        let duration = self.base_time.elapsed();
+        duration.as_secs_f64() * 1_000.0
+    }
+}
+
+impl<const MAX_VERTICES: usize> PhysicsManifoldData<MAX_VERTICES> {
+    /// Solves a created physics manifold between two physics bodies
+    fn solve(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
+        match body_a.shape.kind {
+            PHYSICS_CIRCLE => {
+                match body_b.shape.kind {
+                    PHYSICS_CIRCLE => self.solve_circle_to_circle(body_a, body_b),
+                    PHYSICS_POLYGON => self.solve_circle_to_polygon(body_a, body_b),
+                }
+            }
+            PHYSICS_POLYGON => {
+                match body_b.shape.kind {
+                    PHYSICS_CIRCLE => self.solve_polygon_to_circle(body_a, body_b),
+                    PHYSICS_POLYGON => self.solve_polygon_to_polygon(body_a, body_b),
+                }
+            }
+        }
+
+        // Update physics body grounded state if normal direction is down and grounded state is not set yet in previous manifolds
+        if !body_b.is_grounded {
+            body_b.is_grounded = self.normal.y < 0.0;
+        }
+    }
+
+    /// Solves collision between two circle shape physics bodies
+    fn solve_circle_to_circle(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &PhysicsBodyData<MAX_VERTICES>) {
+        // Calculate translational vector, which is normal
+        let normal = body_b.position - body_a.position;
+
+        let dist_sqr = normal.length_sqr();
+        let radius = body_a.shape.radius + body_b.shape.radius;
+
+        // Check if circles are not in contact
+        if dist_sqr >= radius*radius {
+            self.contacts_count = 0;
+            return;
+        }
+
+        let distance = dist_sqr.sqrt();
+        self.contacts_count = 1;
+
+        if distance == 0.0 {
+            self.penetration = body_a.shape.radius;
+            self.normal = Vector2 { x: 1.0, y: 0.0 };
+            self.contacts[0] = body_a.position;
+        } else {
+            self.penetration = radius - distance;
+            self.normal = Vector2 { x: normal.x/distance, y: normal.y/distance }; // Faster than using MathNormalize() due to sqrt is already performed
+            self.contacts[0] = Vector2 {
+                x: self.normal.x*body_a.shape.radius + body_a.position.x,
+                y: self.normal.y*body_a.shape.radius + body_a.position.y,
+            };
+        }
+
+        // Update physics body grounded state if normal direction is down
+        if !body_a.is_grounded {
+            body_a.is_grounded = self.normal.y < 0.0;
+        }
+    }
+
+    /// Solves collision between a circle to a polygon shape physics bodies
+    fn solve_circle_to_polygon(&mut self, body_a: &PhysicsBodyData<MAX_VERTICES>, body_b: &PhysicsBodyData<MAX_VERTICES>) {
+        self.solve_different_shapes(body_a, body_b);
+    }
+
+    /// Solves collision between a circle to a polygon shape physics bodies
+    fn solve_polygon_to_circle(&mut self, body_a: &PhysicsBodyData<MAX_VERTICES>, body_b: &PhysicsBodyData<MAX_VERTICES>) {
+        self.solve_different_shapes(body_b, body_a);
+
+        self.normal.x *= -1.0;
+        self.normal.y *= -1.0;
+    }
+
+    /// Solve collision between two different types of shapes
+    fn solve_different_shapes(&mut self, body_a: &PhysicsBodyData<MAX_VERTICES>, body_b: &PhysicsBodyData<MAX_VERTICES>) {
+        self.contacts_count = 0;
+
+        // Transform circle center to polygon transform space
+        let mut center = body_a.position;
+        center = body_b.shape.transform.transpose().multiply_vector2(center - body_b.position);
+
+        // Find edge with minimum penetration
+        // It is the same concept as using support points in SolvePolygonToPolygon
+        let mut separation = f32::MIN;
+        let mut face_normal = 0;
+        let vertex_data = body_b.shape.vertex_data;
+
+        for i in 0..vertex_data.vertex_count {
+            let current_separation = vertex_data.normals[i ].dot(center - vertex_data.positions[i]);
+
+            if current_separation > body_a.shape.radius {
+                return;
+            }
+
+            if current_separation > separation {
+                separation = current_separation;
+                face_normal = i;
+            }
+        }
+
+        // Grab face's vertices
+        let mut v1 = vertex_data.positions[face_normal];
+        let next_index = if (face_normal + 1) < vertex_data.vertex_count { face_normal + 1 } else { 0 };
+        let mut v2 = vertex_data.positions[next_index];
+
+        // Check to see if center is within polygon
+        if separation < f32::EPSILON {
+            self.contacts_count = 1;
+            let normal = body_b.shape.transform.multiply_vector2(vertex_data.normals[face_normal]);
+            self.normal = Vector2 { x: -normal.x, y: -normal.y };
+            self.contacts[0] = Vector2 { x: self.normal.x*body_a.shape.radius + body_a.position.x, y: self.normal.y*body_a.shape.radius + body_a.position.y };
+            self.penetration = body_a.shape.radius;
+            return;
+        }
+
+        // Determine which voronoi region of the edge center of circle lies within
+        let dot1 = (center - v1).dot(v2 - v1);
+        let dot2 = (center - v2).dot(v1 - v2);
+        self.penetration = body_a.shape.radius - separation;
+
+        if dot1 <= 0.0 { // Closest to v1
+            if dist_sqr(center, v1) > body_a.shape.radius*body_a.shape.radius {
+                return;
+            }
+
+            self.contacts_count = 1;
+            let mut normal = v1 - center;
+            normal = body_b.shape.transform.multiply_vector2(normal);
+            math_normalize(&mut normal);
+            self.normal = normal;
+            v1 = body_b.shape.transform.multiply_vector2(v1);
+            v1 = v1 + body_b.position;
+            self.contacts[0] = v1;
+        } else if dot2 <= 0.0 { // Closest to v2
+            if dist_sqr(center, v2) > body_a.shape.radius*body_a.shape.radius {
+                return;
+            }
+
+            self.contacts_count = 1;
+            let mut normal = v2 - center;
+            v2 = body_b.shape.transform.multiply_vector2(v2);
+            v2 = v2 + body_b.position;
+            self.contacts[0] = v2;
+            normal = body_b.shape.transform.multiply_vector2(normal);
+            math_normalize(&mut normal);
+            self.normal = normal;
+        } else { // Closest to face
+            let mut normal = vertex_data.normals[face_normal];
+
+            if dist_sqr(center - v1, normal) > body_a.shape.radius {
+                return;
+            }
+
+            normal = body_b.shape.transform.multiply_vector2(normal);
+            self.normal = Vector2 { x: -normal.x, y: -normal.y };
+            self.contacts[0] = Vector2 { x: self.normal.x*body_a.shape.radius + body_a.position.x, y: self.normal.y*body_a.shape.radius + body_a.position.y };
+            self.contacts_count = 1;
+        }
+    }
+
+    /// Solves collision between two polygons shape physics bodies
+    fn solve_polygon_to_polygon(&mut self, body_a: &PhysicsBodyData<MAX_VERTICES>, body_b: &PhysicsBodyData<MAX_VERTICES>) {
+        self.contacts_count = 0;
+
+        // Check for separating axis with A shape's face planes
+        let mut face_a = 0;
+        let penetration_a = find_axis_least_penetration(&mut face_a, body_a, body_b);
+
+        if penetration_a >= 0.0 {
+            return;
+        }
+
+        // Check for separating axis with B shape's face planes
+        let mut face_b = 0;
+        let penetration_b = find_axis_least_penetration(&mut face_b, body_b, body_a);
+
+        if penetration_b >= 0.0 {
+            return;
+        }
+
+        let mut reference_index;
+        let mut flip = false;  // Always point from A shape to B shape
+
+        let ref_poly; // Reference
+        let inc_poly; // Incident
+
+        // Determine which shape contains reference face
+        if bias_greater_than(penetration_a, penetration_b) {
+            ref_poly = body_a;
+            inc_poly = body_b;
+            reference_index = face_a;
+        } else {
+            ref_poly = body_b;
+            inc_poly = body_a;
+            reference_index = face_b;
+            flip = true;
+        }
+
+        // World space incident face
+        let mut incident_face0 = Vector2::zero();
+        let mut incident_face1 = Vector2::zero();
+        find_incident_face(&mut incident_face0, &mut incident_face1, ref_poly, inc_poly, reference_index);
+
+        // Setup reference face vertices
+        let ref_data = ref_poly.shape.vertex_data;
+        let mut v1 = ref_data.positions[reference_index];
+        reference_index = if (reference_index + 1) < ref_data.vertex_count { reference_index + 1 } else { 0 };
+        let mut v2 = ref_data.positions[reference_index];
+
+        // Transform vertices to world space
+        v1 = ref_poly.shape.transform.multiply_vector2(v1);
+        v1 = v1 + ref_poly.position;
+        v2 = ref_poly.shape.transform.multiply_vector2(v2);
+        v2 = v2 + ref_poly.position;
+
+        // Calculate reference face side normal in world space
+        let mut side_plane_normal = v2 - v1;
+        math_normalize(&mut side_plane_normal);
+
+        // Orthogonalize
+        let ref_face_normal = Vector2 { x: side_plane_normal.y, y: -side_plane_normal.x };
+        let ref_c = ref_face_normal.dot(v1);
+        let neg_side = side_plane_normal.dot(v1)*-1.0;
+        let pos_side = side_plane_normal.dot(v2);
+
+        // Clip incident face to reference face side planes (due to floating point error, possible to not have required points
+        if clip(-side_plane_normal, neg_side, &mut incident_face0, &mut incident_face1) < 2 {
+            return;
+        }
+
+        if clip(side_plane_normal, pos_side, &mut incident_face0, &mut incident_face1) < 2 {
+            return;
+        }
+
+        // Flip normal if required
+        self.normal = if flip { -ref_face_normal } else { ref_face_normal };
+
+        // Keep points behind reference face
+        let mut current_point = 0; // Clipped points behind reference face
+        let mut separation = ref_face_normal.dot(incident_face0) - ref_c;
+
+        if separation <= 0.0 {
+            self.contacts[current_point] = incident_face0;
+            self.penetration = -separation;
+            current_point += 1;
+        } else {
+            self.penetration = 0.0;
+        }
+
+        separation = ref_face_normal.dot(incident_face1) - ref_c;
+
+        if separation <= 0.0 {
+            self.contacts[current_point] = incident_face1;
+            self.penetration += -separation;
+            current_point += 1;
+
+            // Calculate total penetration average
+            self.penetration /= current_point as f32;
+        }
+
+        self.contacts_count = current_point;
+    }
 }
 
 /// Returns the extreme point along a direction within a polygon
-fn get_support(shape: &PhysicsShape, dir: Vector2) -> Vector2 {
+fn get_support<const MAX_VERTICES: usize>(shape: &PhysicsShape<MAX_VERTICES>, dir: Vector2) -> Vector2 {
     let mut best_projection = -f32::MIN_POSITIVE;
     let mut best_vertex = Vector2 { x: 0.0, y: 0.0 };
     let data = &shape.vertex_data;
 
     for i in 0..data.vertex_count {
-        let vertex = data.positions[i as usize];
+        let vertex = data.positions[i];
         let projection = vertex.dot(dir);
 
         if projection > best_projection {
@@ -2146,7 +2026,14 @@ fn get_support(shape: &PhysicsShape, dir: Vector2) -> Vector2 {
 }
 
 /// Finds polygon shapes axis least penetration
-fn find_axis_least_penetration(face_index: &mut u32, shape_a: &PhysicsShape, shape_b: &PhysicsShape) -> f32 {
+fn find_axis_least_penetration<const MAX_VERTICES: usize>(
+    face_index: &mut usize,
+    body_a: &PhysicsBodyData<MAX_VERTICES>,
+    body_b: &PhysicsBodyData<MAX_VERTICES>,
+) -> f32 {
+    let shape_a = &body_a.shape;
+    let shape_b = &body_b.shape;
+
     let mut best_distance = f32::MIN;
     let mut best_index = 0;
 
@@ -2154,7 +2041,7 @@ fn find_axis_least_penetration(face_index: &mut u32, shape_a: &PhysicsShape, sha
 
     for i in 0..data_a.vertex_count {
         // Retrieve a face normal from A shape
-        let mut normal = data_a.normals[i as usize];
+        let mut normal = data_a.normals[i];
         let trans_normal = shape_a.transform.multiply_vector2(normal);
 
         // Transform face normal into B shape's model space
@@ -2165,10 +2052,10 @@ fn find_axis_least_penetration(face_index: &mut u32, shape_a: &PhysicsShape, sha
         let support = get_support(shape_b, Vector2 { x: -normal.x, y: -normal.y });
 
         // Retrieve vertex on face from A shape, transform into B shape's model space
-        let mut vertex = data_a.positions[i as usize];
+        let mut vertex = data_a.positions[i];
         vertex = shape_a.transform.multiply_vector2(vertex);
-        vertex = vertex + shape_a.body.upgrade().unwrap().borrow().position;
-        vertex = vertex - shape_b.body.upgrade().unwrap().borrow().position;
+        vertex = vertex + body_a.position;
+        vertex = vertex - body_b.position;
         vertex = bu_t.multiply_vector2(vertex);
 
         // Compute penetration distance in B shape's model space
@@ -2186,11 +2073,14 @@ fn find_axis_least_penetration(face_index: &mut u32, shape_a: &PhysicsShape, sha
 }
 
 /// Finds two polygon shapes incident face
-fn find_incident_face(v0: &mut Vector2, v1: &mut Vector2, ref_shape: &PhysicsShape, inc_shape: &PhysicsShape, index: u32) {
+fn find_incident_face<const MAX_VERTICES: usize>(v0: &mut Vector2, v1: &mut Vector2, ref_body: &PhysicsBodyData<MAX_VERTICES>, inc_body: &PhysicsBodyData<MAX_VERTICES>, index: usize) {
+    let ref_shape = &ref_body.shape;
+    let inc_shape = &inc_body.shape;
+
     let ref_data = &ref_shape.vertex_data;
     let inc_data = &inc_shape.vertex_data;
 
-    let mut reference_normal = ref_data.normals[index as usize];
+    let mut reference_normal = ref_data.normals[index];
 
     // Calculate normal in incident's frame of reference
     reference_normal = ref_shape.transform.multiply_vector2(reference_normal); // To world space
@@ -2201,7 +2091,7 @@ fn find_incident_face(v0: &mut Vector2, v1: &mut Vector2, ref_shape: &PhysicsSha
     let mut min_dot = f32::MAX;
 
     for i in 0..inc_data.vertex_count {
-        let dot = reference_normal.dot(inc_data.normals[i as usize]);
+        let dot = reference_normal.dot(inc_data.normals[i]);
 
         if dot < min_dot {
             min_dot = dot;
@@ -2210,15 +2100,15 @@ fn find_incident_face(v0: &mut Vector2, v1: &mut Vector2, ref_shape: &PhysicsSha
     }
 
     // Assign face vertices for incident face
-    *v0 = inc_shape.transform.multiply_vector2(inc_data.positions[incident_face as usize]);
-    *v0 = *v0 + inc_shape.body.upgrade().unwrap().borrow().position;
+    *v0 = inc_shape.transform.multiply_vector2(inc_data.positions[incident_face]);
+    *v0 = *v0 + inc_body.position;
     incident_face = if (incident_face + 1) < inc_data.vertex_count { incident_face + 1 } else { 0 };
-    *v1 = inc_shape.transform.multiply_vector2(inc_data.positions[incident_face as usize]);
-    *v1 = *v1 + inc_shape.body.upgrade().unwrap().borrow().position;
+    *v1 = inc_shape.transform.multiply_vector2(inc_data.positions[incident_face]);
+    *v1 = *v1 + inc_body.position;
 }
 
 /// Calculates clipping based on a normal and two faces
-fn clip(normal: Vector2, clip: f32, face_a: &mut Vector2, face_b: &mut Vector2) -> u32 {
+fn clip(normal: Vector2, clip: f32, face_a: &mut Vector2, face_b: &mut Vector2) -> usize {
     let mut sp = 0;
     let mut out = [*face_a, *face_b];
 
@@ -2228,12 +2118,12 @@ fn clip(normal: Vector2, clip: f32, face_a: &mut Vector2, face_b: &mut Vector2) 
 
     // If negative (behind plane)
     if distance_a <= 0.0 {
-        out[sp as usize] = *face_a;
+        out[sp] = *face_a;
         sp += 1;
     }
 
     if distance_b <= 0.0 {
-        out[sp as usize] = *face_b;
+        out[sp] = *face_b;
         sp += 1;
     }
 
@@ -2241,11 +2131,11 @@ fn clip(normal: Vector2, clip: f32, face_a: &mut Vector2, face_b: &mut Vector2) 
     if (distance_a*distance_b) < 0.0 {
         // Push intersection point
         let alpha = distance_a/(distance_a - distance_b);
-        out[sp as usize] = *face_a;
+        out[sp] = *face_a;
         let mut delta = *face_b - *face_a;
         delta.x *= alpha;
         delta.y *= alpha;
-        out[sp as usize] = out[sp as usize] + delta;
+        out[sp] = out[sp] + delta;
         sp += 1;
     }
 
@@ -2266,25 +2156,6 @@ fn triangle_barycenter(v1: Vector2, v2: Vector2, v3: Vector2) -> Vector2 {
     Vector2 {
         x: (v1.x + v2.x + v3.x)/3.0,
         y: (v1.y + v2.y + v3.y)/3.0,
-    }
-}
-
-impl Physac {
-    /// Initializes hi-resolution MONOTONIC timer
-    fn init_timer(&mut self) {
-        self.base_time = Instant::now(); // Get MONOTONIC clock time offset
-        self.start_time = self.get_curr_time(); // Get current time
-    }
-
-    /// Get hi-res MONOTONIC time measure in seconds
-    fn _get_time_count(&self) -> u64 {
-        self.base_time.elapsed().as_secs()
-    }
-
-    /// Get current time in milliseconds
-    fn get_curr_time(&self) -> f64 {
-        let duration = self.base_time.elapsed();
-        duration.as_secs_f64() * 1_000.0
     }
 }
 

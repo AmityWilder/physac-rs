@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "bindgen"
 version = "0.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -39,9 +45,9 @@ checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 
 [[package]]
 name = "cc"
-version = "1.2.17"
+version = "1.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fcb57c740ae1daf453ae85f16e37396f672b039e00d9d866e07ddb24e328e3a"
+checksum = "525046617d8376e3db1deffb079e91cef90a89fc3ca5c185bbf8c9ecdd15cd5c"
 dependencies = [
  "shlex",
 ]
@@ -153,11 +159,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
-name = "physac-rs"
+name = "physac"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "raylib",
 ]
+
+[[package]]
+name = "physics_demo"
+version = "0.1.0"
+dependencies = [
+ "physac",
+ "raylib",
+]
+
+[[package]]
+name = "physics_friction"
+version = "0.1.0"
+
+[[package]]
+name = "physics_movement"
+version = "0.1.0"
+
+[[package]]
+name = "physics_restitution"
+version = "0.1.0"
+
+[[package]]
+name = "physics_shatter"
+version = "0.1.0"
 
 [[package]]
 name = "prettyplease"
