@@ -1623,259 +1623,14 @@ impl<
 impl<const MAX_VERTICES: usize> PhysicsManifoldData<MAX_VERTICES> {
     /// Solves a created physics manifold between two physics bodies
     fn solve(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
-        match (body_a.shape.clone(), body_b.shape.clone()) {
-            // Solve collision between two circle shape physics bodies
-            (
-                PHYSICS_CIRCLE { radius: radius_a },
-                PHYSICS_CIRCLE { radius: radius_b },
-            ) => {
-                'solve: for _ in [()] {
-                    // Calculate translational vector, which is normal
-                    let normal = body_b.position - body_a.position;
-
-                    let dist_sqr = normal.length_sqr();
-                    let radius = radius_a + radius_b;
-
-                    // Check if circles are not in contact
-                    if dist_sqr >= radius*radius {
-                        self.contacts_count = 0;
-                        break 'solve;
-                    }
-
-                    let distance = dist_sqr.sqrt();
-                    self.contacts_count = 1;
-
-                    if distance == 0.0 {
-                        self.penetration = radius_a;
-                        self.normal = Vector2 { x: 1.0, y: 0.0 };
-                        self.contacts[0] = body_a.position;
-                    } else {
-                        self.penetration = radius - distance;
-                        self.normal = Vector2 { x: normal.x/distance, y: normal.y/distance }; // Faster than using MathNormalize() due to sqrt is already performed
-                        self.contacts[0] = Vector2 {
-                            x: self.normal.x*radius_a + body_a.position.x,
-                            y: self.normal.y*radius_a + body_a.position.y,
-                        };
-                    }
-                }
-
-                // Update physics body grounded state if normal direction is down
-                if !body_a.is_grounded {
-                    body_a.is_grounded = self.normal.y < 0.0;
-                }
+        match body_a.shape.clone() {
+            PHYSICS_CIRCLE { .. } => match body_b.shape.clone() {
+                PHYSICS_CIRCLE { .. } => self.solve_circle_to_circle(body_a, body_b),
+                PHYSICS_POLYGON { .. } => self.solve_circle_to_polygon(body_a, body_b),
             }
-
-            // Solve collision between two different types of shapes
-            (
-                PHYSICS_CIRCLE { radius: circ_radius },
-                PHYSICS_POLYGON { vertex_data: poly_vertex_data, transform: poly_transform },
-            ) | (
-                PHYSICS_POLYGON { vertex_data: poly_vertex_data, transform: poly_transform },
-                PHYSICS_CIRCLE { radius: circ_radius },
-            ) => {
-                let is_polygon_to_circle = matches!((&body_a.shape, &body_b.shape), (PHYSICS_POLYGON { .. }, PHYSICS_CIRCLE { .. }));
-                let (body_circ, body_poly) = if is_polygon_to_circle { (&body_b, &body_a) } else { (&body_a, &body_b) };
-
-                'solve: for _ in [()] {
-                    self.contacts_count = 0;
-
-                    // Transform circle center to polygon transform space
-                    let mut center = body_circ.position;
-                    center = poly_transform.transpose().multiply_vector2(center - body_poly.position);
-
-                    // Find edge with minimum penetration
-                    // It is the same concept as using support points in SolvePolygonToPolygon
-                    let mut separation = f32::MIN;
-                    let mut face_normal = 0;
-                    let vertex_data = poly_vertex_data;
-
-                    for i in 0..vertex_data.vertex_count {
-                        let current_separation = vertex_data.normals[i ].dot(center - vertex_data.positions[i]);
-
-                        if current_separation > circ_radius {
-                            break 'solve;
-                        }
-
-                        if current_separation > separation {
-                            separation = current_separation;
-                            face_normal = i;
-                        }
-                    }
-
-                    // Grab face's vertices
-                    let mut v1 = vertex_data.positions[face_normal];
-                    let next_index = next_idx(face_normal, vertex_data.vertex_count);
-                    let mut v2 = vertex_data.positions[next_index];
-
-                    // Check to see if center is within polygon
-                    if separation < f32::EPSILON {
-                        self.contacts_count = 1;
-                        let normal = poly_transform.multiply_vector2(vertex_data.normals[face_normal]);
-                        self.normal = Vector2 { x: -normal.x, y: -normal.y };
-                        self.contacts[0] = Vector2 {
-                            x: self.normal.x*circ_radius + body_circ.position.x,
-                            y: self.normal.y*circ_radius + body_circ.position.y,
-                        };
-                        self.penetration = circ_radius;
-                        break 'solve;
-                    }
-
-                    // Determine which voronoi region of the edge center of circle lies within
-                    let dot1 = (center - v1).dot(v2 - v1);
-                    let dot2 = (center - v2).dot(v1 - v2);
-                    self.penetration = circ_radius - separation;
-
-                    if dot1 <= 0.0 { // Closest to v1
-                        if dist_sqr(center, v1) > circ_radius*circ_radius {
-                            break 'solve;
-                        }
-
-                        self.contacts_count = 1;
-                        let mut normal = v1 - center;
-                        normal = poly_transform.multiply_vector2(normal);
-                        math_normalize(&mut normal);
-                        self.normal = normal;
-                        v1 = poly_transform.multiply_vector2(v1);
-                        v1 = v1 + body_poly.position;
-                        self.contacts[0] = v1;
-                    } else if dot2 <= 0.0 { // Closest to v2
-                        if dist_sqr(center, v2) > circ_radius*circ_radius {
-                            break 'solve;
-                        }
-
-                        self.contacts_count = 1;
-                        let mut normal = v2 - center;
-                        v2 = poly_transform.multiply_vector2(v2);
-                        v2 = v2 + body_poly.position;
-                        self.contacts[0] = v2;
-                        normal = poly_transform.multiply_vector2(normal);
-                        math_normalize(&mut normal);
-                        self.normal = normal;
-                    } else { // Closest to face
-                        let mut normal = vertex_data.normals[face_normal];
-
-                        if dist_sqr(center - v1, normal) > circ_radius {
-                            break 'solve;
-                        }
-
-                        normal = poly_transform.multiply_vector2(normal);
-                        self.normal = Vector2 { x: -normal.x, y: -normal.y };
-                        self.contacts[0] = Vector2 { x: self.normal.x*circ_radius + body_circ.position.x, y: self.normal.y*circ_radius + body_circ.position.y };
-                        self.contacts_count = 1;
-                    }
-                }
-
-                if is_polygon_to_circle {
-                    self.normal *= -1.0;
-                }
-            }
-
-            // Solve collision between two polygons shape physics bodies
-            (
-                PHYSICS_POLYGON { vertex_data: vertex_data_a, transform: transform_a },
-                PHYSICS_POLYGON { vertex_data: vertex_data_b, transform: transform_b },
-            ) => {
-                'solve: for _ in [()] {
-                    self.contacts_count = 0;
-
-                    // Check for separating axis with A shape's face planes
-                    let mut face_a = 0;
-                    let penetration_a = find_axis_least_penetration(&mut face_a, body_a, body_b);
-
-                    if penetration_a >= 0.0 {
-                        break 'solve;
-                    }
-
-                    // Check for separating axis with B shape's face planes
-                    let mut face_b = 0;
-                    let penetration_b = find_axis_least_penetration(&mut face_b, body_b, body_a);
-
-                    if penetration_b >= 0.0 {
-                        break 'solve;
-                    }
-
-                    let mut reference_index;
-                    let mut flip = false;  // Always point from A shape to B shape
-
-                    let ref_poly; // Reference
-                    let inc_poly; // Incident
-
-                    // Determine which shape contains reference face
-                    if bias_greater_than(penetration_a, penetration_b) {
-                        ref_poly = (&body_a, vertex_data_a, transform_a);
-                        inc_poly = (&body_b, vertex_data_b, transform_b);
-                        reference_index = face_a;
-                    } else {
-                        ref_poly = (&body_b, vertex_data_b, transform_b);
-                        inc_poly = (&body_a, vertex_data_a, transform_a);
-                        reference_index = face_b;
-                        flip = true;
-                    }
-
-                    // World space incident face
-                    let mut incident_face0 = Vector2::zero();
-                    let mut incident_face1 = Vector2::zero();
-                    find_incident_face(&mut incident_face0, &mut incident_face1, ref_poly.0, inc_poly.0, reference_index);
-
-                    // Setup reference face vertices
-                    let ref_data = ref_poly.1;
-                    let mut v1 = ref_data.positions[reference_index];
-                    reference_index = next_idx(reference_index, ref_data.vertex_count);
-                    let mut v2 = ref_data.positions[reference_index];
-
-                    // Transform vertices to world space
-                    v1 = ref_poly.2.multiply_vector2(v1);
-                    v1 = v1 + ref_poly.0.position;
-                    v2 = ref_poly.2.multiply_vector2(v2);
-                    v2 = v2 + ref_poly.0.position;
-
-                    // Calculate reference face side normal in world space
-                    let mut side_plane_normal = v2 - v1;
-                    math_normalize(&mut side_plane_normal);
-
-                    // Orthogonalize
-                    let ref_face_normal = Vector2 { x: side_plane_normal.y, y: -side_plane_normal.x };
-                    let ref_c = ref_face_normal.dot(v1);
-                    let neg_side = side_plane_normal.dot(v1)*-1.0;
-                    let pos_side = side_plane_normal.dot(v2);
-
-                    // Clip incident face to reference face side planes (due to floating point error, possible to not have required points
-                    if clip(-side_plane_normal, neg_side, &mut incident_face0, &mut incident_face1) < 2 {
-                        break 'solve;
-                    }
-
-                    if clip(side_plane_normal, pos_side, &mut incident_face0, &mut incident_face1) < 2 {
-                        break 'solve;
-                    }
-
-                    // Flip normal if required
-                    self.normal = if flip { -ref_face_normal } else { ref_face_normal };
-
-                    // Keep points behind reference face
-                    let mut current_point = 0; // Clipped points behind reference face
-                    let mut separation = ref_face_normal.dot(incident_face0) - ref_c;
-
-                    if separation <= 0.0 {
-                        self.contacts[current_point as usize] = incident_face0;
-                        self.penetration = -separation;
-                        current_point += 1;
-                    } else {
-                        self.penetration = 0.0;
-                    }
-
-                    separation = ref_face_normal.dot(incident_face1) - ref_c;
-
-                    if separation <= 0.0 {
-                        self.contacts[current_point as usize] = incident_face1;
-                        self.penetration += -separation;
-                        current_point += 1;
-
-                        // Calculate total penetration average
-                        self.penetration /= current_point as f32;
-                    }
-
-                    self.contacts_count = current_point;
-                }
+            PHYSICS_POLYGON { .. } => match body_b.shape.clone() {
+                PHYSICS_CIRCLE { .. } => self.solve_polygon_to_circle(body_a, body_b),
+                PHYSICS_POLYGON { .. } => self.solve_polygon_to_polygon(body_a, body_b),
             }
         }
 
@@ -1883,6 +1638,249 @@ impl<const MAX_VERTICES: usize> PhysicsManifoldData<MAX_VERTICES> {
         if !body_b.is_grounded {
             body_b.is_grounded = self.normal.y < 0.0;
         }
+    }
+
+    // Solves collision between two circle shape physics bodies
+    fn solve_circle_to_circle(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
+        let PHYSICS_CIRCLE { radius: radus_a } = body_a.shape else { panic!("only circle bodies should be passed to solve_circle_to_circle") };
+        let PHYSICS_CIRCLE { radius: radus_b } = body_b.shape else { panic!("only circle bodies should be passed to solve_circle_to_circle") };
+
+        // Calculate translational vector, which is normal
+        let normal = body_b.position - body_a.position;
+
+        let dist_sqr = normal.length_sqr();
+        let radius = radus_a + radus_b;
+
+        // Check if circles are not in contact
+        if dist_sqr >= radius*radius {
+            self.contacts_count = 0;
+            return;
+        }
+
+        let distance = dist_sqr.sqrt();
+        self.contacts_count = 1;
+
+        if distance == 0.0 {
+            self.penetration = radus_a;
+            self.normal = Vector2 { x: 1.0, y: 0.0 };
+            self.contacts[0] = body_a.position;
+        } else {
+            self.penetration = radius - distance;
+            self.normal = Vector2 { x: normal.x/distance, y: normal.y/distance }; // Faster than using MathNormalize() due to sqrt is already performed
+            self.contacts[0] = Vector2 { x: self.normal.x*radus_a + body_a.position.x, y: self.normal.y*radus_a + body_a.position.y };
+        }
+
+        // Update physics body grounded state if normal direction is down
+        if !body_a.is_grounded {
+            body_a.is_grounded = self.normal.y < 0.0;
+        }
+    }
+
+    // Solves collision between a circle to a polygon shape physics bodies
+    fn solve_circle_to_polygon(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
+        self.solve_different_shapes(body_a, body_b);
+    }
+
+    // Solves collision between a circle to a polygon shape physics bodies
+    fn solve_polygon_to_circle(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
+        self.solve_different_shapes(body_b, body_a);
+
+        self.normal.x *= -1.0;
+        self.normal.y *= -1.0;
+    }
+
+    // Solve collision between two different types of shapes
+    fn solve_different_shapes(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
+        let PHYSICS_CIRCLE { radius: radius_a } = body_a.shape else { panic!("only circle bodies should be passed to solve_different_shapes body_a") };
+        let PHYSICS_POLYGON { vertex_data: vertex_data_b, transform: transform_b } = &body_b.shape else { panic!("only circle bodies should be passed to solve_different_shapes body_b") };
+
+        self.contacts_count = 0;
+
+        // Transform circle center to polygon transform space
+        let mut center = body_a.position;
+        center = transform_b.transpose().multiply_vector2(center - body_b.position);
+
+        // Find edge with minimum penetration
+        // It is the same concept as using support points in SolvePolygonToPolygon
+        let mut separation = f32::MIN;
+        let mut face_normal = 0;
+        let vertex_data = vertex_data_b;
+
+        for i in 0..vertex_data.vertex_count {
+            let current_separation = vertex_data.normals[i].dot(center - vertex_data.positions[i]);
+
+            if current_separation > radius_a {
+                return;
+            }
+
+            if current_separation > separation {
+                separation = current_separation;
+                face_normal = i;
+            }
+        }
+
+        // Grab face's vertices
+        let mut v1 = vertex_data.positions[face_normal];
+        let next_index = next_idx(face_normal, vertex_data.vertex_count);
+        let mut v2 = vertex_data.positions[next_index];
+
+        // Check to see if center is within polygon
+        if separation < f32::EPSILON {
+            self.contacts_count = 1;
+            let normal = transform_b.multiply_vector2(vertex_data.normals[face_normal]);
+            self.normal = -normal;
+            self.contacts[0] = Vector2 { x: self.normal.x*radius_a + body_a.position.x, y: self.normal.y*radius_a + body_a.position.y };
+            self.penetration = radius_a;
+            return;
+        }
+
+        // Determine which voronoi region of the edge center of circle lies within
+        let dot1 = (center - v1).dot(v2 - v1);
+        let dot2 = (center - v2).dot(v1 - v2);
+        self.penetration = radius_a - separation;
+
+        if dot1 <= 0.0 { // Closest to v1
+            if dist_sqr(center, v1) > radius_a*radius_a {
+                return;
+            }
+
+            self.contacts_count = 1;
+            let mut normal = v1 - center;
+            normal = transform_b.multiply_vector2(normal);
+            math_normalize(&mut normal);
+            self.normal = normal;
+            v1 = transform_b.multiply_vector2(v1);
+            v1 = v1 + body_b.position;
+            self.contacts[0] = v1;
+        } else if dot2 <= 0.0 { // Closest to v2
+            if dist_sqr(center, v2) > radius_a*radius_a {
+                return;
+            }
+
+            self.contacts_count = 1;
+            let mut normal = v2 - center;
+            v2 = transform_b.multiply_vector2(v2);
+            v2 = v2 + body_b.position;
+            self.contacts[0] = v2;
+            normal = transform_b.multiply_vector2(normal);
+            math_normalize(&mut normal);
+            self.normal = normal;
+        } else { // Closest to face
+            let mut normal = vertex_data.normals[face_normal];
+
+            if (center - v1).dot(normal) > radius_a {
+                return;
+            }
+
+            normal = transform_b.multiply_vector2(normal);
+            self.normal = Vector2 { x: -normal.x, y: -normal.y };
+            self.contacts[0] = Vector2 { x: self.normal.x*radius_a + body_a.position.x, y: self.normal.y*radius_a + body_a.position.y };
+            self.contacts_count = 1;
+        }
+    }
+
+    // Solves collision between two polygons shape physics bodies
+    fn solve_polygon_to_polygon(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES>) {
+        self.contacts_count = 0;
+
+        // Check for separating axis with A shape's face planes
+        let mut face_a = 0;
+        let penetration_a = find_axis_least_penetration(&mut face_a, body_a, body_b);
+
+        if penetration_a >= 0.0 {
+            return;
+        }
+
+        // Check for separating axis with B shape's face planes
+        let mut face_b = 0;
+        let penetration_b = find_axis_least_penetration(&mut face_b, body_b, body_a);
+
+        if penetration_b >= 0.0 {
+            return;
+        }
+
+        let mut reference_index;
+        let mut flip = false;  // Always point from A shape to B shape
+
+        let ref_body; // Reference
+        let inc_body; // Incident
+
+        // Determine which shape contains reference face
+        if bias_greater_than(penetration_a, penetration_b) {
+            ref_body = body_a;
+            inc_body = body_b;
+            reference_index = face_a;
+        } else {
+            ref_body = body_b;
+            inc_body = body_a;
+            reference_index = face_b;
+            flip = true;
+        }
+        let PHYSICS_POLYGON { vertex_data: ref_data, transform: ref_transform } = &ref_body.shape else { panic!("only polygon bodies should be passed to solve_polygon_to_polygon") };
+        // let PHYSICS_POLYGON { vertex_data: inc_data, transform: inc_transform } = &inc_body.shape else { panic!("only polygon bodies should be passed to solve_polygon_to_polygon") };
+
+        // World space incident face
+        let mut incident_face = find_incident_face(ref_body, inc_body, reference_index);
+
+        // Setup reference face vertices
+        let ref_data = ref_data;
+        let mut v1 = ref_data.positions[reference_index];
+        reference_index = next_idx(reference_index, ref_data.vertex_count);
+        let mut v2 = ref_data.positions[reference_index];
+
+        // Transform vertices to world space
+        v1 = ref_transform.multiply_vector2(v1);
+        v1 = v1 + ref_body.position;
+        v2 = ref_transform.multiply_vector2(v2);
+        v2 = v2 + ref_body.position;
+
+        // Calculate reference face side normal in world space
+        let mut side_plane_normal = v2 - v1;
+        math_normalize(&mut side_plane_normal);
+
+        // Orthogonalize
+        let ref_face_normal = Vector2 { x: side_plane_normal.y, y: -side_plane_normal.x };
+        let ref_c = ref_face_normal.dot(v1);
+        let neg_side = side_plane_normal.dot(v1)*-1.0;
+        let pos_side = side_plane_normal.dot(v2);
+
+        // Clip incident face to reference face side planes (due to floating point error, possible to not have required points
+        let [face_a, face_b] = &mut incident_face;
+        if clip(-side_plane_normal, neg_side, face_a, face_b) < 2 {
+            return;
+        }
+
+        if clip(side_plane_normal, pos_side, face_a, face_b) < 2 {
+            return;
+        }
+
+        // Flip normal if required
+        self.normal = if flip { -ref_face_normal } else { ref_face_normal };
+
+        // Keep points behind reference face
+        let mut current_point: u32 = 0; // Clipped points behind reference face
+        let mut separation = ref_face_normal.dot(incident_face[0]) - ref_c;
+
+        if separation <= 0.0 {
+            self.contacts[current_point as usize] = incident_face[0];
+            self.penetration = -separation;
+            current_point += 1;
+        } else {
+            self.penetration = 0.0;
+        }
+
+        separation = ref_face_normal.dot(incident_face[1]) - ref_c;
+
+        if separation <= 0.0 {
+            self.contacts[current_point as usize] = incident_face[1];
+            self.penetration += -separation;
+            current_point += 1;
+
+            // Calculate total penetration average
+            self.penetration /= current_point as f32;
+        }
+
+        self.contacts_count = current_point;
     }
 }
 
@@ -1953,7 +1951,7 @@ fn find_axis_least_penetration<const MAX_VERTICES: usize>(
 }
 
 /// Finds two polygon shapes incident face
-fn find_incident_face<const MAX_VERTICES: usize>(v0: &mut Vector2, v1: &mut Vector2, ref_body: &PhysicsBodyData<MAX_VERTICES>, inc_body: &PhysicsBodyData<MAX_VERTICES>, index: usize) {
+fn find_incident_face<const MAX_VERTICES: usize>(ref_body: &PhysicsBodyData<MAX_VERTICES>, inc_body: &PhysicsBodyData<MAX_VERTICES>, index: usize) -> [Vector2; 2] {
     let ref_shape = &ref_body.shape;
     let inc_shape = &inc_body.shape;
 
@@ -1980,11 +1978,10 @@ fn find_incident_face<const MAX_VERTICES: usize>(v0: &mut Vector2, v1: &mut Vect
     }
 
     // Assign face vertices for incident face
-    *v0 = inc_transform.multiply_vector2(inc_data.positions[incident_face]);
-    *v0 = *v0 + inc_body.position;
+    let v0 = inc_transform.multiply_vector2(inc_data.positions[incident_face]) + inc_body.position;
     incident_face = next_idx(incident_face, inc_data.vertex_count);
-    *v1 = inc_transform.multiply_vector2(inc_data.positions[incident_face]);
-    *v1 = *v1 + inc_body.position;
+    let v1 = inc_transform.multiply_vector2(inc_data.positions[incident_face]) + inc_body.position;
+    [v0, v1]
 }
 
 /// Calculates clipping based on a normal and two faces
