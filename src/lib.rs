@@ -94,7 +94,10 @@ use std::time::Instant;
 #[cfg(not(feature = "no_threads"))]
 use std::{
     time::Duration,
-    sync::{self, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering::{Relaxed, Release}},
+        self, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    },
     thread,
 };
 
@@ -499,8 +502,6 @@ pub struct Physac<const MAX_BODIES: usize, const MAX_MANIFOLDS: usize, const MAX
     /// Physics thread
     physics_thread: Option<thread::JoinHandle<()>>,
 
-    /// Physics thread enabled state
-    physics_thread_enabled: bool,
     /// Offset time for MONOTONIC clock
     base_time: Instant,
     /// Start time in milliseconds
@@ -527,7 +528,7 @@ pub struct PhysacHandle<
     const MAX_BODIES: usize,
     const MAX_MANIFOLDS: usize,
     const MAX_VERTICES: usize,
->(Arc<RwLock<Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>>>);
+>(Arc<RwLock<Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>>>, Arc<AtomicBool>);
 #[cfg(feature = "no_threads")]
 pub struct PhysacHandle<
     const MAX_BODIES: usize,
@@ -538,12 +539,31 @@ impl<
     const MAX_BODIES: usize,
     const MAX_MANIFOLDS: usize,
     const MAX_VERTICES: usize,
-    > Drop for PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
+> Drop for PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
+    /// Unitializes physics pointers and exits physics loop thread
     fn drop(&mut self) {
         #[cfg(not(feature = "no_threads"))]
-        self.0.write().expect("thread poison recovery is not supported").close_physics();
+        let PhysacHandle(phys, is_physics_thread_enabled) = self;
         #[cfg(feature = "no_threads")]
-        self.0.close_physics();
+        let PhysacHandle(phys) = self;
+
+        #[cfg(not(feature = "no_threads"))] {
+            // Exit physics loop thread
+            is_physics_thread_enabled.store(false, Release);
+
+            let join_handle = phys
+                .write()
+                .expect("thread poison recovery is not supported")
+                .physics_thread
+                .take()
+                .expect("[PHYSAC] thread should exist if physics has been initialized");
+
+            join_handle
+                .join()
+                .expect("[PHYSAC] physics thread failed to close");
+        }
+
+        debug_print!("[PHYSAC] physics module closed successfully");
     }
 }
 #[cfg(feature = "no_threads")]
@@ -579,10 +599,13 @@ pub fn init_physics<
     const MAX_VERTICES: usize,
     const COLLISION_ITERATIONS: usize,
 >() -> PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
+    // Physics thread enabled state
+    #[cfg(not(feature = "no_threads"))]
+    let is_physics_thread_enabled = Arc::new(AtomicBool::new(false));
+
     let mut phys: Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> = Physac {
         #[cfg(not(feature = "no_threads"))]
         physics_thread: None,
-        physics_thread_enabled: false,
         base_time: Instant::now(),
         start_time: 0.0,
         delta_time: 1.0/60.0/10.0 * 1000.0,
@@ -597,18 +620,17 @@ pub fn init_physics<
     // Initialize high resolution timer
     phys.init_timer();
 
-    let ph = PhysacHandle(
-        #[cfg(not(feature = "no_threads"))]
-        Arc::new(RwLock::new(phys)),
-        #[cfg(feature = "no_threads")]
-        phys,
-    );
+    #[cfg(not(feature = "no_threads"))]
+    let ph = PhysacHandle(Arc::new(RwLock::new(phys)), is_physics_thread_enabled);
+    #[cfg(feature = "no_threads")]
+    let ph = PhysacHandle(phys);
 
     #[cfg(not(feature = "no_threads"))] {
         // NOTE: if defined, user will need to create a thread for PhysicsThread function manually
         // Create physics thread using POSIXS thread libraries
         let phys_clone = ph.0.clone();
-        let thread_handle = thread::spawn(move || physics_loop::<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES, COLLISION_ITERATIONS>(phys_clone));
+        let is_physics_thread_enabled = ph.1.clone();
+        let thread_handle = thread::spawn(move || physics_loop::<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES, COLLISION_ITERATIONS>(phys_clone, is_physics_thread_enabled));
         ph.0.write().expect("thread poison recovery is not supported").physics_thread = Some(thread_handle);
     }
 
@@ -622,6 +644,12 @@ impl<
     const MAX_MANIFOLDS: usize,
     const MAX_VERTICES: usize,
 > PhysacHandle<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
+    #[cfg(not(feature = "no_threads"))]
+    /// Returns true if physics thread is currently enabled
+    pub fn is_physics_enabled(&self) -> bool {
+        self.1.load(Relaxed)
+    }
+
     /// Borrow Physac from any other threads for the duration of the closure
     pub fn lock<T, F>(&self, f: F) -> T
     where
@@ -654,11 +682,6 @@ impl<
     const MAX_MANIFOLDS: usize,
     const MAX_VERTICES: usize,
 > Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES> {
-    /// Returns true if physics thread is currently enabled
-    pub fn is_physics_enabled(&self) -> bool {
-        self.physics_thread_enabled
-    }
-
     /// Sets physics global gravity force
     pub fn set_physics_gravity(&mut self, x: f32, y: f32) {
         self.gravity_force.x = x;
@@ -1069,34 +1092,6 @@ impl<
             debug_print!("[PHYSAC] error trying to destroy a null referenced body");
         }
     }
-
-    /// Unitializes physics pointers and exits physics loop thread
-    pub fn close_physics(&mut self) {
-        // Exit physics loop thread
-        self.physics_thread_enabled = false;
-
-        #[cfg(not(feature = "no_threads"))] {
-            self.physics_thread
-                .take()
-                .expect("[PHYSAC] thread should exist if physics has been initialized")
-                .join()
-                .expect("[PHYSAC] physics thread failed to close");
-        }
-
-        // // Unitialize physics manifolds dynamic memory allocations
-        // for i in (0..self.physics_manifolds_count).rev() {
-        //     let manifold = self.contacts[i].as_ref().unwrap().downgrade();
-        //     self.destroy_physics_manifold(manifold);
-        // }
-
-        // // Unitialize physics bodies dynamic memory allocations
-        // for i in (0..self.physics_bodies_count).rev() {
-        //     let body = self.bodies[i].as_ref().unwrap().downgrade();
-        //     self.destroy_physics_body(body);
-        // }
-
-        debug_print!("[PHYSAC] physics module closed successfully");
-    }
 }
 
 impl<const MAX_VERTICES: usize> PhysicsBody<MAX_VERTICES> {
@@ -1244,15 +1239,15 @@ fn physics_loop<
     const MAX_MANIFOLDS: usize,
     const MAX_VERTICES: usize,
     const COLLISION_ITERATIONS: usize,
-> (phys: Arc<RwLock<Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>>>) {
+> (phys: Arc<RwLock<Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>>>, is_physics_thread_enabled: Arc<AtomicBool>) {
     debug_print!("[PHYSAC] physics thread created successfully");
 
     // Initialize physics loop thread values
-    { phys.write().expect("thread poison recovery is not supported").physics_thread_enabled = true; }
+    is_physics_thread_enabled.store(true, Relaxed);
 
     // Physics update loop
-    while phys.read().expect("thread poison recovery is not supported").physics_thread_enabled {
-        { phys.write().expect("thread poison recovery is not supported").run_physics_step::<COLLISION_ITERATIONS>(); }
+    while is_physics_thread_enabled.load(Relaxed) {
+        phys.write().expect("thread poison recovery is not supported").run_physics_step::<COLLISION_ITERATIONS>();
 
         let req = Duration::from_secs_f64(1.0/60.0);
 

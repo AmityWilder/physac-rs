@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 raylib = "5.5"
-physac = { path = "../../", features = ["raylib", "debug", "no_threads"] }
+physac = { path = "../../", features = ["raylib", "debug"] }
