@@ -366,6 +366,35 @@ pub mod phys_rc {
     use super::*;
 
     #[cfg(not(feature = "no_threads"))]
+    pub struct PhysacHandleReadGuard<'a, T>(pub(super) RwLockReadGuard<'a, T>);
+    #[cfg(feature = "no_threads")]
+    pub struct PhysacHandleReadGuard<'a, T>(pub(super) &'a T);
+    impl<T> std::ops::Deref for PhysacHandleReadGuard<'_, T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            &*self.0
+        }
+    }
+
+    #[cfg(not(feature = "no_threads"))]
+    pub struct PhysacHandleWriteGuard<'a, T>(pub(super) RwLockWriteGuard<'a, T>);
+    #[cfg(feature = "no_threads")]
+    pub struct PhysacHandleWriteGuard<'a, T>(pub(super) &'a mut T);
+    impl<T> std::ops::Deref for PhysacHandleWriteGuard<'_, T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            &*self.0
+        }
+    }
+    impl<T> std::ops::DerefMut for PhysacHandleWriteGuard<'_, T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut *self.0
+        }
+    }
+
+    #[cfg(not(feature = "no_threads"))]
     pub struct PhysacReadGuard<'a, T>(RwLockReadGuard<'a, T>);
     #[cfg(feature = "no_threads")]
     pub struct PhysacReadGuard<'a, T>(Ref<'a, T>);
@@ -444,6 +473,30 @@ pub mod phys_rc {
                 PhysacWriteGuard(self.0.borrow_mut())
             }
         }
+
+        /// Get a temporary reference to the body
+        pub fn borrowed<U, F>(&self, f: F) -> U
+        where
+            F: FnOnce(&T) -> U
+        {
+            #[cfg(not(feature = "no_threads"))] {
+                f(&*self.0.read().expect("thread poison recovery is not supported"))
+            } #[cfg(feature = "no_threads")] {
+                f(&*self.0.borrow())
+            }
+        }
+
+        /// Get a temporary mutable reference to the body
+        pub fn borrowed_mut<U, F>(&self, f: F) -> U
+        where
+            F: FnOnce(&mut T) -> U
+        {
+            #[cfg(not(feature = "no_threads"))] {
+                f(&mut *self.0.write().expect("thread poison recovery is not supported"))
+            } #[cfg(feature = "no_threads")] {
+                f(&mut *self.0.borrow_mut())
+            }
+        }
     }
 
     #[cfg(not(feature = "no_threads"))]
@@ -475,6 +528,28 @@ pub mod phys_rc {
         /// receiving physics ticks once it has been destroyed--even if you are still holding onto one of these
         pub fn upgrade(&self) -> Option<Strong<T>> {
             self.0.upgrade().map(|body| Strong(body))
+        }
+
+        /// Upgrades and borrows the inner value, applying the closure to that
+        ///
+        /// Returns [`None`] if the body has been destroyed
+        #[must_use]
+        pub fn borrowed<U, F>(&self, f: F) -> Option<U>
+        where
+            F: FnOnce(&T) -> U
+        {
+            self.upgrade().map(|x| x.borrowed(f))
+        }
+
+        /// Upgrades and borrows the inner value, applying the closure to that
+        ///
+        /// Returns [`None`] if the body has been destroyed
+        #[must_use]
+        pub fn borrowed_mut<U, F>(&self, f: F) -> Option<U>
+        where
+            F: FnOnce(&mut T) -> U
+        {
+            self.upgrade().map(|x| x.borrowed_mut(f))
         }
     }
 }
@@ -651,7 +726,7 @@ impl<
     }
 
     /// Borrow Physac from any other threads for the duration of the closure
-    pub fn lock<T, F>(&self, f: F) -> T
+    pub fn borrowed<T, F>(&self, f: F) -> T
     where
         F: FnOnce(&Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>) -> T
     {
@@ -664,7 +739,7 @@ impl<
     }
 
     /// Borrow Physac mutably from any other threads for the duration of the closure
-    pub fn lock_mut<T, F>(&mut self, f: F) -> T
+    pub fn borrowed_mut<T, F>(&mut self, f: F) -> T
     where
         F: FnOnce(&mut Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>) -> T
     {
@@ -673,6 +748,24 @@ impl<
             f(&mut *phys)
         } #[cfg(feature = "no_threads")] {
             f(&mut self.0)
+        }
+    }
+
+    /// Borrow Physac from any other threads until the guard goes out of scope
+    pub fn borrow(&self) -> PhysacHandleReadGuard<'_, Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>> {
+        #[cfg(not(feature = "no_threads"))] {
+            PhysacHandleReadGuard(self.0.read().expect("thread poison recovery is not supported"))
+        } #[cfg(feature = "no_threads")] {
+            PhysacHandleReadGuard(&self.0)
+        }
+    }
+
+    /// Borrow Physac mutably from any other threads until the guard goes out of scope
+    pub fn borrow_mut(&mut self) -> PhysacHandleWriteGuard<'_, Physac<MAX_BODIES, MAX_MANIFOLDS, MAX_VERTICES>> {
+        #[cfg(not(feature = "no_threads"))] {
+            PhysacHandleWriteGuard(self.0.write().expect("thread poison recovery is not supported"))
+        } #[cfg(feature = "no_threads")] {
+            PhysacHandleWriteGuard(&mut self.0)
         }
     }
 }
@@ -1024,7 +1117,7 @@ impl<
                         drop(new_body_data);
 
                         // Apply force to new physics body
-                        new_body.downgrade().add_force(force_direction);
+                        new_body.borrow_mut().add_force(force_direction);
                     }
 
                     drop(vertices);
@@ -1094,59 +1187,43 @@ impl<
     }
 }
 
-impl<const MAX_VERTICES: usize> PhysicsBody<MAX_VERTICES> {
+impl<const MAX_VERTICES: usize> PhysicsBodyData<MAX_VERTICES> {
     /// Adds a force to a physics body
     pub fn add_force(&mut self, force: Vector2) {
-        if let Some(body) = self.upgrade() {
-            let mut body = body.borrow_mut();
-            body.force = body.force + force;
-        }
+        self.force = self.force + force;
     }
 
     /// Adds an angular force to a physics body
     pub fn add_torque(&mut self, amount: f32) {
-        if let Some(body) = self.upgrade() {
-            let mut body = body.borrow_mut();
-            body.torque += amount;
-        }
+        self.torque += amount;
     }
 
     /// Returns transformed position of a body shape (body position + vertex transformed position)
     pub fn get_physics_shape_vertex(&self, vertex: usize) -> Option<Vector2> {
-        if let Some(body) = self.upgrade() {
-            let body = body.borrow();
-            match body.shape {
-                PHYSICS_CIRCLE { radius } => {
-                    Some(Vector2 {
-                        x: body.position.x + (360.0/DEFAULT_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).cos()*radius,
-                        y: body.position.y + (360.0/DEFAULT_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).sin()*radius,
-                    })
-                }
-                PHYSICS_POLYGON { vertex_data, transform } => {
-                    if let Some(&p) = vertex_data.positions.get(vertex) {
-                        Some(body.position + transform.multiply_vector2(p))
-                    } else {
-                        debug_print!("[PHYSAC] physics shape vertex index is out of bounds");
-                        None
-                    }
+        match self.shape {
+            PHYSICS_CIRCLE { radius } => {
+                Some(Vector2 {
+                    x: self.position.x + (360.0/DEFAULT_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).cos()*radius,
+                    y: self.position.y + (360.0/DEFAULT_CIRCLE_VERTICES as f32*vertex as f32*DEG2RAD as f32).sin()*radius,
+                })
+            }
+            PHYSICS_POLYGON { vertex_data, transform } => {
+                if let Some(&p) = vertex_data.positions.get(vertex) {
+                    Some(self.position + transform.multiply_vector2(p))
+                } else {
+                    debug_print!("[PHYSAC] physics shape vertex index is out of bounds");
+                    None
                 }
             }
-        } else {
-            debug_print!("[PHYSAC] error when trying to get a null reference physics body");
-            None
         }
     }
 
     /// Sets physics body shape transform based on radians parameter
     pub fn set_rotation(&mut self, radians: f32) {
-        if let Some(body) = self.upgrade() {
-            let mut body = body.borrow_mut();
+        self.orient = radians;
 
-            body.orient = radians;
-
-            if let PHYSICS_POLYGON { transform, .. } = &mut body.shape {
-                *transform = Mat2::radians(radians);
-            }
+        if let PHYSICS_POLYGON { transform, .. } = &mut self.shape {
+            *transform = Mat2::radians(radians);
         }
     }
 }
