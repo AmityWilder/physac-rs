@@ -35,12 +35,7 @@ fn main() {
     let logo_y = 15;
 
     // Initialize physics and default physics bodies
-    let mut ph = init_physics::<
-        DEFAULT_MAX_BODIES,
-        DEFAULT_MAX_MANIFOLDS,
-        DEFAULT_MAX_VERTICES,
-        DEFAULT_COLLISION_ITERATIONS,
-    >();
+    let mut ph = init_physics::<24>().build();
 
     // Create floor rectangle physics body
     let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0).unwrap();
@@ -104,10 +99,10 @@ fn main() {
                     for j in 0..vertex_count {
                         // Get physics bodies shape vertices to draw lines
                         // Note: ph.get_physics_shape_vertex() already calculates rotation transformations
-                        let vertex_a = body.borrowed(|body| body.get_physics_shape_vertex(j).unwrap()).unwrap();
+                        let vertex_a = ph.borrow().get_physics_body_shape_vertex(&body, j).unwrap();
 
                         let jj = if (j + 1) < vertex_count { j + 1 } else { 0 };   // Get next vertex or first to close the shape
-                        let vertex_b = body.borrowed(|body| body.get_physics_shape_vertex(jj).unwrap()).unwrap();
+                        let vertex_b = ph.borrow().get_physics_body_shape_vertex(&body, jj).unwrap();
 
                         d.draw_line_v(vertex_a, vertex_b, Color::GREEN);     // Draw a line between two vertex positions
                     }

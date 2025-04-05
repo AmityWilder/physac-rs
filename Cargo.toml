@@ -7,7 +7,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-arrayvec = "0.7.6"
 raylib = { version = "*", optional = true }
 
 [features]
