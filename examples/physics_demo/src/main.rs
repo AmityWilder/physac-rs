@@ -43,12 +43,12 @@ fn main() {
     >();
 
     // Create floor rectangle physics body
-    let floor = ph.create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), 500.0, 100.0, 10.0);
-    floor.upgrade().unwrap().borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+    let floor = ph.lock_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), 500.0, 100.0, 10.0)).unwrap();
+    floor.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
 
     // Create obstacle circle physics body
-    let circle = ph.create_physics_body_circle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 45.0, 10.0);
-    circle.upgrade().unwrap().borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+    let circle = ph.lock_mut(|ph| ph.create_physics_body_circle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 45.0, 10.0)).unwrap();
+    circle.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
 
     rl.set_target_fps(60);
 
@@ -60,55 +60,57 @@ fn main() {
         //----------------------------------------------------------------------------------
         // Physics body creation inputs
         if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
-            ph.create_physics_body_polygon(rl.get_mouse_position(), rl.get_random_value::<i32>(20..80) as f32, rl.get_random_value::<i32>(3..8) as usize, 10.0);
+            ph.lock_mut(|ph| ph.create_physics_body_polygon(rl.get_mouse_position(), rl.get_random_value::<i32>(20..80) as f32, rl.get_random_value::<i32>(3..8) as usize, 10.0));
         } else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_RIGHT) {
-            ph.create_physics_body_circle(rl.get_mouse_position(), rl.get_random_value::<i32>(10..45) as f32, 10.0);
+            ph.lock_mut(|ph| ph.create_physics_body_circle(rl.get_mouse_position(), rl.get_random_value::<i32>(10..45) as f32, 10.0));
         }
 
         // Destroy falling physics bodies
-        let mut bodies_count = ph.get_physics_bodies_count();
+        let mut bodies_count = ph.lock(|ph| ph.get_physics_bodies_count());
         for i in (0..bodies_count).rev() {
-            if let Some(body) = ph.get_physics_body(i) {
+            if let Some(body) = ph.lock(|ph| ph.get_physics_body(i)) {
                 if body.upgrade().unwrap().borrow().position.y > (screen_height*2) as f32 {
-                    ph.destroy_physics_body(body);
+                    ph.lock_mut(|ph| ph.destroy_physics_body(body));
                 }
             }
         }
 
-        ph.run_physics_step::<DEFAULT_COLLISION_ITERATIONS>();
+        ph.lock_mut(|ph| ph.run_physics_step::<DEFAULT_COLLISION_ITERATIONS>());
         //----------------------------------------------------------------------------------
 
         // Draw
         //----------------------------------------------------------------------------------
-        let mut d = rl.begin_drawing(&thread);
+        {
+            let mut d = rl.begin_drawing(&thread);
 
-        d.clear_background(Color::BLACK);
+            d.clear_background(Color::BLACK);
 
-        d.draw_fps(screen_width - 90, screen_height - 30);
+            d.draw_fps(screen_width - 90, screen_height - 30);
 
-        // Draw created physics bodies
-        bodies_count = ph.get_physics_bodies_count();
-        for i in 0..bodies_count {
-            if let Some(body) = ph.get_physics_body(i) {
-                let vertex_count = ph.get_physics_shape_vertices_count(i);
-                for j in 0..vertex_count {
-                    // Get physics bodies shape vertices to draw lines
-                    // Note: ph.get_physics_shape_vertex() already calculates rotation transformations
-                    let vertex_a = body.get_physics_shape_vertex(j);
+            // Draw created physics bodies
+            bodies_count = ph.lock(|ph| ph.get_physics_bodies_count());
+            for i in 0..bodies_count {
+                if let Some(body) = ph.lock(|ph| ph.get_physics_body(i)) {
+                    let vertex_count = ph.lock(|ph| ph.get_physics_shape_vertices_count(i)).unwrap();
+                    for j in 0..vertex_count {
+                        // Get physics bodies shape vertices to draw lines
+                        // Note: ph.get_physics_shape_vertex() already calculates rotation transformations
+                        let vertex_a = body.get_physics_shape_vertex(j).unwrap();
 
-                    let jj = if (j + 1) < vertex_count { j + 1 } else { 0 };   // Get next vertex or first to close the shape
-                    let vertex_b = body.get_physics_shape_vertex(jj);
+                        let jj = if (j + 1) < vertex_count { j + 1 } else { 0 };   // Get next vertex or first to close the shape
+                        let vertex_b = body.get_physics_shape_vertex(jj).unwrap();
 
-                    d.draw_line_v(vertex_a, vertex_b, Color::GREEN);     // Draw a line between two vertex positions
+                        d.draw_line_v(vertex_a, vertex_b, Color::GREEN);     // Draw a line between two vertex positions
+                    }
                 }
             }
+
+            d.draw_text("Left mouse button to create a polygon", 10, 10, 10, Color::WHITE);
+            d.draw_text("Right mouse button to create a circle", 10, 25, 10, Color::WHITE);
+
+            d.draw_text("Physac", logo_x, logo_y, 30, Color::WHITE);
+            d.draw_text("Powered by", logo_x + 50, logo_y - 7, 10, Color::WHITE);
         }
-
-        d.draw_text("Left mouse button to create a polygon", 10, 10, 10, Color::WHITE);
-        d.draw_text("Right mouse button to create a circle", 10, 25, 10, Color::WHITE);
-
-        d.draw_text("Physac", logo_x, logo_y, 30, Color::WHITE);
-        d.draw_text("Powered by", logo_x + 50, logo_y - 7, 10, Color::WHITE);
         //----------------------------------------------------------------------------------
     }
 }

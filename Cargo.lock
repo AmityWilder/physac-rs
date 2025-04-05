@@ -177,18 +177,34 @@ dependencies = [
 [[package]]
 name = "physics_friction"
 version = "0.1.0"
+dependencies = [
+ "physac",
+ "raylib",
+]
 
 [[package]]
 name = "physics_movement"
 version = "0.1.0"
+dependencies = [
+ "physac",
+ "raylib",
+]
 
 [[package]]
 name = "physics_restitution"
 version = "0.1.0"
+dependencies = [
+ "physac",
+ "raylib",
+]
 
 [[package]]
 name = "physics_shatter"
 version = "0.1.0"
+dependencies = [
+ "physac",
+ "raylib",
+]
 
 [[package]]
 name = "prettyplease"
