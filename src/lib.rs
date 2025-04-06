@@ -315,8 +315,6 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsManifoldDat
     }
 }
 
-// TODO: Figure out how to make sure Strong references are never stored outside of Physac so that Physac can reliably do physics without panicking because a borrow is being held for too long
-
 pub mod phys_rc {
     use super::*;
 
