@@ -83,11 +83,10 @@ use std::f64::consts::PI;
 const DEG2RAD: f64 = PI/180.0;
 
 macro_rules! debug_print {
-    ($($msg:tt)*) => {
-        #[cfg(feature = "debug")] {
-            println!($($msg)*);
-        }
-    };
+    ($($msg:tt)*) => {{
+        #[cfg(feature = "debug")]
+        println!($($msg)*);
+    }};
 }
 
 #[inline(always)]
@@ -368,6 +367,28 @@ pub mod phys_rc {
                 inner: Arc::downgrade(inner),
                 #[cfg(not(feature = "sync"))]
                 inner: Rc::downgrade(inner),
+            }
+        }
+
+        /// Try to get a temporary reference to the body, returning an error if the resource is poisoned
+        ///
+        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        pub fn read(&self) -> std::sync::LockResult<PhysacReadGuard<'_, T>> {
+            #[cfg(feature = "sync")] {
+                self.inner.read()
+            } #[cfg(not(feature = "sync"))] {
+                Ok(self.inner.borrow())
+            }
+        }
+
+        /// Try to get a temporary mutable reference to the body, returning an error if the resource is poisoned
+        ///
+        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        pub fn write(&self) -> std::sync::LockResult<PhysacWriteGuard<'_, T>> {
+            #[cfg(feature = "sync")] {
+                self.inner.write()
+            } #[cfg(not(feature = "sync"))] {
+                Ok(self.inner.borrow_mut())
             }
         }
 
@@ -1190,6 +1211,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
         self.bodies.iter().map(|body| body.borrow_mut())
     }
 
+    pub fn strong_physics_body_iter(&self) -> impl DoubleEndedIterator<Item = &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> + ExactSizeIterator {
+        self.bodies.iter()
+    }
+
     /// Unitializes and destroys a physics body
     pub fn destroy_physics_body(&mut self, body: Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>) {
         let id = body.borrow().id;
@@ -1222,6 +1247,31 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
         } else {
             debug_print!("[PHYSAC] error trying to destroy a null referenced body");
         }
+    }
+
+    /// Destroy all physics bodies that meet a condition
+    ///
+    /// This method operates in place, visiting each element exactly once in the original order, and preserves the order of the retained elements
+    pub fn destroy_physics_bodies<P>(&mut self, mut predicate: P)
+    where
+        P: FnMut(&PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>) -> bool,
+    {
+        self.destroy_physics_bodies_mut(|body| predicate(body));
+    }
+
+    /// Destroy all physics bodies that meet a condition
+    ///
+    /// This method operates in place, visiting each element exactly once in the original order, and preserves the order of the retained elements
+    pub fn destroy_physics_bodies_mut<P>(&mut self, mut predicate: P)
+    where
+        P: FnMut(&mut PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>) -> bool,
+    {
+        self.bodies.retain_mut(|body| !predicate(&mut *body.borrow_mut()));
+    }
+
+    /// Removes all physics bodies
+    pub fn clear_physics_bodies(&mut self) {
+        self.bodies.clear();
     }
 }
 
@@ -1345,6 +1395,37 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PolygonData<MAX_VE
     }
 }
 
+#[derive(Debug)]
+pub enum PhysicsStepError {
+    PhysacPoison,
+    PhysicsBodyPoison,
+    OutOfIDs,
+    OutOfBounds,
+    DivByZero,
+}
+impl std::fmt::Display for PhysicsStepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PhysacPoison => write!(f, "a panic occurred while Physac was borrowed mutably"),
+            Self::PhysicsBodyPoison => write!(f, "a panic occurred while a physics body was borrowed mutably"),
+            Self::OutOfIDs => write!(f, "insufficient IDs are available"),
+            Self::OutOfBounds => write!(f, "an out of bounds error occurred"),
+            Self::DivByZero => write!(f, "tried to divide by zero"),
+        }
+    }
+}
+impl std::error::Error for PhysicsStepError {}
+impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> From<std::sync::PoisonError<PhysacReadGuard<'_, PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>>> for PhysicsStepError {
+    fn from(_: std::sync::PoisonError<PhysacReadGuard<'_, PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>>) -> Self {
+        Self::PhysicsBodyPoison
+    }
+}
+impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> From<std::sync::PoisonError<PhysacWriteGuard<'_, PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>>> for PhysicsStepError {
+    fn from(_: std::sync::PoisonError<PhysacWriteGuard<'_, PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>>) -> Self {
+        Self::PhysicsBodyPoison
+    }
+}
+
 /// Physics loop thread function
 #[cfg(feature = "phys_thread")]
 fn physics_loop<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>(phys: Arc<RwLock<Physac<MAX_VERTICES, CIRCLE_VERTICES>>>, is_physics_thread_enabled: Arc<AtomicBool>) {
@@ -1355,9 +1436,16 @@ fn physics_loop<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>(phys: A
 
     // Physics update loop
     while is_physics_thread_enabled.load(Relaxed) {
-        phys.write().expect("thread poison recovery is not supported").run_physics_step();
+        let fixed_time = match phys.write().map_err(|_| PhysicsStepError::PhysacPoison).and_then(|mut lock| lock.run_physics_step().map(|_| lock.fixed_time)) {
+            Ok(fixed_time) => fixed_time,
+            Err(e) => {
+                debug_print!("[PHYSAC] {e}; physics thread will now close");
+                is_physics_thread_enabled.store(false, Release);
+                return;
+            }
+        };
 
-        let req = Duration::from_secs_f64(phys.read().expect("thread poison recovery is not supported").fixed_time);
+        let req = Duration::from_secs_f64(fixed_time);
 
         std::thread::sleep(req);
     }
@@ -1365,7 +1453,7 @@ fn physics_loop<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>(phys: A
 
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICES, CIRCLE_VERTICES> {
     /// Physics steps calculations (dynamics, collisions and position corrections)
-    fn physics_step(&mut self) {
+    fn physics_step(&mut self) -> Result<(), PhysicsStepError> {
         // Update current steps count
         self.steps_count += 1;
 
@@ -1374,7 +1462,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 
         // Reset physics bodies grounded state
         for body in &self.bodies {
-            body.borrow_mut().is_grounded = false;
+            body.write()?.is_grounded = false;
         }
 
         // Generate new collision information
@@ -1382,17 +1470,18 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             for j in (i + 1)..self.bodies.len() {
                 let body_a = self.bodies[i].clone();
                 let body_b = self.bodies[j].clone();
-                if (self.bodies[i].borrow().inverse_mass == 0.0) && (body_b.borrow().inverse_mass == 0.0) {
+                if (body_a.read()?.inverse_mass == 0.0) &&
+                   (body_b.read()?.inverse_mass == 0.0) {
                     continue;
                 }
 
-                let manifold = self.create_physics_manifold(body_a.clone(), body_b.clone()).unwrap();
-                manifold.solve(&mut *body_a.borrow_mut(), &mut *body_b.borrow_mut());
+                let manifold = self.create_physics_manifold(body_a.clone(), body_b.clone()).ok_or(PhysicsStepError::OutOfIDs)?;
+                manifold.solve(&mut *(body_a.write()?), &mut *(body_b.write()?));
 
                 if manifold.contacts_count > 0 {
                     let manifold = manifold.clone();
                     // Create a new manifold with same information as previously solved manifold and add it to the manifolds pool last slot
-                    let new_manifold = self.create_physics_manifold(body_a, body_b).unwrap();
+                    let new_manifold = self.create_physics_manifold(body_a, body_b).ok_or(PhysicsStepError::OutOfIDs)?;
                     new_manifold.penetration = manifold.penetration;
                     new_manifold.normal = manifold.normal;
                     new_manifold.contacts[0] = manifold.contacts[0];
@@ -1407,41 +1496,43 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 
         // Integrate forces to physics bodies
         for body in &self.bodies {
-            Self::integrate_physics_forces(&mut *body.borrow_mut(), self.delta_time, self.gravity_force);
+            Self::integrate_physics_forces(&mut *body.write()?, self.delta_time, self.gravity_force);
         }
 
         // Initialize physics manifolds to solve collisions
         for manifold in &mut self.contacts {
-            Self::initialize_physics_manifolds(manifold, self.delta_time, self.gravity_force);
+            Self::initialize_physics_manifolds(manifold, self.delta_time, self.gravity_force)?;
         }
 
         // Integrate physics collisions impulses to solve collisions
         for _ in 0..self.collision_iterations {
             for manifold in &mut self.contacts {
-                Self::integrate_physics_impulses(manifold);
+                Self::integrate_physics_impulses(manifold)?;
             }
         }
 
         // Integrate velocity to physics bodies
         for body in &self.bodies {
-            Self::integrate_physics_velocity(&mut *body.borrow_mut(), self.delta_time, self.gravity_force);
+            Self::integrate_physics_velocity(&mut *body.write()?, self.delta_time, self.gravity_force);
         }
 
         // Correct physics bodies positions based on manifolds collision information
         for manifold in &mut self.contacts {
-            Self::correct_physics_positions(manifold, self.penetration_allowance, self.penetration_correction);
+            Self::correct_physics_positions(manifold, self.penetration_allowance, self.penetration_correction)?;
         }
 
         // Clear physics bodies forces
         for body in &self.bodies {
-            let mut body = body.borrow_mut();
+            let mut body = body.write()?;
             body.force = Vector2::zero();
             body.torque = 0.0;
         }
+
+        Ok(())
     }
 
     /// Wrapper to ensure PhysicsStep is run with at a fixed time step
-    pub fn run_physics_step(&mut self) {
+    pub fn run_physics_step(&mut self) -> Result<(), PhysicsStepError> {
         // Calculate current time
         self.current_time = self.get_curr_time();
 
@@ -1453,12 +1544,14 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 
         // Fixed time stepping loop
         while self.accumulator >= self.delta_time {
-            self.physics_step();
+            self.physics_step()?;
             self.accumulator -= self.delta_time;
         }
 
         // Record the starting of this frame
         self.start_time = self.current_time;
+
+        Ok(())
     }
 
     pub fn set_physics_time_step(&mut self, delta: f64) {
@@ -1540,9 +1633,9 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     }
 
     /// Initializes physics manifolds to solve collisions
-    fn initialize_physics_manifolds(manifold: &mut PhysicsManifoldData<MAX_VERTICES, CIRCLE_VERTICES>, delta_time: f64, gravity_force: Vector2) {
-        let body_a = manifold.body_a.borrow();
-        let body_b = manifold.body_b.borrow();
+    fn initialize_physics_manifolds(manifold: &mut PhysicsManifoldData<MAX_VERTICES, CIRCLE_VERTICES>, delta_time: f64, gravity_force: Vector2) -> Result<(), PhysicsStepError> {
+        let body_a = manifold.body_a.read()?;
+        let body_b = manifold.body_b.read()?;
 
         // Calculate average restitution, static and dynamic friction
         manifold.restitution = (body_a.restitution*body_b.restitution).sqrt();
@@ -1557,31 +1650,31 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             let cross_a = math_cross(body_a.angular_velocity, radius_a);
             let cross_b = math_cross(body_b.angular_velocity, radius_b);
 
-            let mut radius_v = Vector2 { x: 0.0, y: 0.0 };
-            radius_v.x = body_b.velocity.x + cross_b.x - body_a.velocity.x - cross_a.x;
-            radius_v.y = body_b.velocity.y + cross_b.y - body_a.velocity.y - cross_a.y;
+            let radius_v = Vector2 {
+                x: body_b.velocity.x + cross_b.x - body_a.velocity.x - cross_a.x,
+                y: body_b.velocity.y + cross_b.y - body_a.velocity.y - cross_a.y,
+            };
 
             // Determine if we should perform a resting collision or not;
             // The idea is if the only thing moving this object is gravity, then the collision should be performed without any restitution
-            if radius_v.length_sqr() < ((Vector2 {
-                x: gravity_force.x*delta_time as f32/1000.0,
-                y: gravity_force.y*delta_time as f32/1000.0,
-            }).length_sqr() + f32::EPSILON) {
+            if radius_v.length_sqr() < ((Vector2 { x: gravity_force.x*delta_time as f32/1000.0, y: gravity_force.y*delta_time as f32/1000.0, }).length_sqr() + f32::EPSILON) {
                 manifold.restitution = 0.0;
             }
         }
+
+        Ok(())
     }
 
     /// Integrates physics collisions impulses to solve collisions
-    fn integrate_physics_impulses(manifold: &mut PhysicsManifoldData<MAX_VERTICES, CIRCLE_VERTICES>) {
-        let mut body_a = manifold.body_a.borrow_mut();
-        let mut body_b = manifold.body_b.borrow_mut();
+    fn integrate_physics_impulses(manifold: &mut PhysicsManifoldData<MAX_VERTICES, CIRCLE_VERTICES>) -> Result<(), PhysicsStepError> {
+        let mut body_a = manifold.body_a.write()?;
+        let mut body_b = manifold.body_b.write()?;
 
         // Early out and positional correct if both objects have infinite mass
         if (body_a.inverse_mass + body_b.inverse_mass).abs() <= f32::EPSILON {
             body_a.velocity = Vector2::zero();
             body_b.velocity = Vector2::zero();
-            return;
+            return Ok(());
         }
 
         for i in 0..manifold.contacts_count {
@@ -1599,7 +1692,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 
             // Do not resolve if velocities are separating
             if contact_velocity > 0.0 {
-                return;
+                return Ok(());
             }
 
             let ra_cross_n = math_cross_vector2(radius_a, manifold.normal);
@@ -1652,7 +1745,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 
             // Don't apply tiny friction impulses
             if abs_impulse_tangent <= f32::EPSILON {
-                return;
+                return Ok(());
             }
 
             // Apply coulumb's law
@@ -1681,6 +1774,8 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Integrates physics velocity into position and forces
@@ -1705,13 +1800,18 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     }
 
     /// Corrects physics bodies positions based on manifolds collision information
-    fn correct_physics_positions(manifold: &mut PhysicsManifoldData<MAX_VERTICES, CIRCLE_VERTICES>, penetration_allowance: f32, penetration_correction: f32) {
-        let mut body_a = manifold.body_a.borrow_mut();
-        let mut body_b = manifold.body_b.borrow_mut();
+    fn correct_physics_positions(manifold: &mut PhysicsManifoldData<MAX_VERTICES, CIRCLE_VERTICES>, penetration_allowance: f32, penetration_correction: f32) -> Result<(), PhysicsStepError> {
+        let mut body_a = manifold.body_a.write()?;
+        let mut body_b = manifold.body_b.write()?;
+
+        let inverse_mass_sum = body_a.inverse_mass + body_b.inverse_mass;
+        if inverse_mass_sum == 0.0 {
+            return Err(PhysicsStepError::DivByZero);
+        }
 
         let correction = Vector2 {
-            x: ((manifold.penetration - penetration_allowance).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.x*penetration_correction,
-            y: ((manifold.penetration - penetration_allowance).max(0.0)/(body_a.inverse_mass + body_b.inverse_mass))*manifold.normal.y*penetration_correction,
+            x: ((manifold.penetration - penetration_allowance).max(0.0)/inverse_mass_sum)*manifold.normal.x*penetration_correction,
+            y: ((manifold.penetration - penetration_allowance).max(0.0)/inverse_mass_sum)*manifold.normal.y*penetration_correction,
         };
 
         if body_a.enabled {
@@ -1723,6 +1823,8 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             body_b.position.x += correction.x*body_b.inverse_mass;
             body_b.position.y += correction.y*body_b.inverse_mass;
         }
+
+        Ok(())
     }
 
     /// Initializes hi-resolution MONOTONIC timer
@@ -1760,8 +1862,8 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsManifoldDat
 
     // Solves collision between two circle shape physics bodies
     fn solve_circle_to_circle(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>) {
-        let PHYSICS_CIRCLE { radius: radus_a } = body_a.shape else { panic!("only circle bodies should be passed to solve_circle_to_circle") };
-        let PHYSICS_CIRCLE { radius: radus_b } = body_b.shape else { panic!("only circle bodies should be passed to solve_circle_to_circle") };
+        let PHYSICS_CIRCLE { radius: radus_a } = body_a.shape else { unreachable!("only circle bodies should be passed to solve_circle_to_circle") };
+        let PHYSICS_CIRCLE { radius: radus_b } = body_b.shape else { unreachable!("only circle bodies should be passed to solve_circle_to_circle") };
 
         // Calculate translational vector, which is normal
         let normal = body_b.position - body_a.position;
@@ -1784,7 +1886,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsManifoldDat
             self.contacts[0] = body_a.position;
         } else {
             self.penetration = radius - distance;
-            self.normal = Vector2 { x: normal.x/distance, y: normal.y/distance }; // Faster than using MathNormalize() due to sqrt is already performed
+            self.normal = Vector2 { x: normal.x/distance, y: normal.y/distance }; // Faster than using math_normalize() due to sqrt is already performed
             self.contacts[0] = Vector2 { x: self.normal.x*radus_a + body_a.position.x, y: self.normal.y*radus_a + body_a.position.y };
         }
 
@@ -1809,8 +1911,8 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsManifoldDat
 
     // Solve collision between two different types of shapes
     fn solve_different_shapes(&mut self, body_a: &mut PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>, body_b: &mut PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>) {
-        let PHYSICS_CIRCLE { radius: radius_a } = body_a.shape else { panic!("only circle bodies should be passed to solve_different_shapes body_a") };
-        let PHYSICS_POLYGON { vertex_data: vertex_data_b, transform: transform_b } = &body_b.shape else { panic!("only circle bodies should be passed to solve_different_shapes body_b") };
+        let PHYSICS_CIRCLE { radius: radius_a } = body_a.shape else { unreachable!("only circle bodies should be passed to solve_different_shapes body_a") };
+        let PHYSICS_POLYGON { vertex_data: vertex_data_b, transform: transform_b } = &body_b.shape else { unreachable!("only circle bodies should be passed to solve_different_shapes body_b") };
 
         self.contacts_count = 0;
 
@@ -1934,8 +2036,8 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsManifoldDat
             reference_index = face_b;
             flip = true;
         }
-        let PHYSICS_POLYGON { vertex_data: ref_data, transform: ref_transform } = &ref_body.shape else { panic!("only polygon bodies should be passed to solve_polygon_to_polygon") };
-        // let PHYSICS_POLYGON { vertex_data: inc_data, transform: inc_transform } = &inc_body.shape else { panic!("only polygon bodies should be passed to solve_polygon_to_polygon") };
+        let PHYSICS_POLYGON { vertex_data: ref_data, transform: ref_transform } = &ref_body.shape else { unreachable!("only polygon bodies should be passed to solve_polygon_to_polygon") };
+        // let PHYSICS_POLYGON { vertex_data: inc_data, transform: inc_transform } = &inc_body.shape else { unreachable!("only polygon bodies should be passed to solve_polygon_to_polygon") };
 
         // World space incident face
         let mut incident_face = find_incident_face(ref_body, inc_body, reference_index);
@@ -2028,8 +2130,8 @@ fn find_axis_least_penetration<const MAX_VERTICES: usize, const CIRCLE_VERTICES:
     let shape_a = &body_a.shape;
     let shape_b = &body_b.shape;
 
-    let PHYSICS_POLYGON { vertex_data: data_a, transform: transform_a } = &shape_a else { panic!("only polygons should be passed to find_axis_least_penetration") };
-    let PHYSICS_POLYGON { vertex_data: data_b, transform: transform_b } = &shape_b else { panic!("only polygons should be passed to find_axis_least_penetration") };
+    let PHYSICS_POLYGON { vertex_data: data_a, transform: transform_a } = &shape_a else { unreachable!("only polygons should be passed to find_axis_least_penetration") };
+    let PHYSICS_POLYGON { vertex_data: data_b, transform: transform_b } = &shape_b else { unreachable!("only polygons should be passed to find_axis_least_penetration") };
 
     let mut best_distance = f32::MIN;
     let mut best_index = 0;
@@ -2072,8 +2174,8 @@ fn find_incident_face<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>(r
     let ref_shape = &ref_body.shape;
     let inc_shape = &inc_body.shape;
 
-    let PHYSICS_POLYGON { vertex_data: ref_data, transform: ref_transform } = &ref_shape else { panic!("only polygons should be passed to find_incident_face") };
-    let PHYSICS_POLYGON { vertex_data: inc_data, transform: inc_transform } = &inc_shape else { panic!("only polygons should be passed to find_incident_face") };
+    let PHYSICS_POLYGON { vertex_data: ref_data, transform: ref_transform } = &ref_shape else { unreachable!("only polygons should be passed to find_incident_face") };
+    let PHYSICS_POLYGON { vertex_data: inc_data, transform: inc_transform } = &inc_shape else { unreachable!("only polygons should be passed to find_incident_face") };
 
     let mut reference_normal = ref_data.normals[index];
 

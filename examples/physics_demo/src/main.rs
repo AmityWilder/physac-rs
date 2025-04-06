@@ -63,16 +63,7 @@ fn main() {
         }
 
         // Destroy falling physics bodies
-        ph.borrowed_mut(|ph| {
-            let bodies_count = ph.get_physics_bodies_count();
-            for i in (0..bodies_count).rev() {
-                if let Some(body) = ph.try_get_physics_body(i).cloned() {
-                    if body.borrow().position.y > (screen_height*2) as f32 {
-                        ph.destroy_physics_body(body);
-                    }
-                }
-            }
-        });
+        ph.borrow_mut().destroy_physics_bodies(|body| body.position.y > (screen_height*2) as f32);
 
         #[cfg(not(feature = "phys_thread"))]
         ph.borrow_mut().run_physics_step();
