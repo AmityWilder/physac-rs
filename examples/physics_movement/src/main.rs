@@ -40,11 +40,11 @@ fn main() {
     let mut ph = init_physics::<24, 24>().build();
 
     // Create floor and walls rectangle physics body
-    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0);
-    let platform_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32*0.25, screen_height as f32*0.6), screen_width as f32*0.25, 10.0, 10.0);
-    let platform_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32*0.75, screen_height as f32*0.6), screen_width as f32*0.25, 10.0, 10.0);
-    let wall_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(-5.0, screen_height as f32/2.0), 10.0, screen_height as f32, 10.0);
-    let wall_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 + 5.0, screen_height as f32/2.0), 10.0, screen_height as f32, 10.0);
+    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0).clone();
+    let platform_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32*0.25, screen_height as f32*0.6), screen_width as f32*0.25, 10.0, 10.0).clone();
+    let platform_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32*0.75, screen_height as f32*0.6), screen_width as f32*0.25, 10.0, 10.0).clone();
+    let wall_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(-5.0, screen_height as f32/2.0), 10.0, screen_height as f32, 10.0).clone();
+    let wall_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 + 5.0, screen_height as f32/2.0), 10.0, screen_height as f32, 10.0).clone();
 
     // Disable dynamics to floor and walls physics bodies
     floor.borrow_mut().enabled = false;
@@ -54,7 +54,7 @@ fn main() {
     wall_right.borrow_mut().enabled = false;
 
     // Create movement physics body
-    let body = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 50.0, 50.0, 1.0));
+    let body = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 50.0, 50.0, 1.0).clone();
     body.borrow_mut().freeze_orient = true;  // Constrain body rotation to avoid little collision torque amounts
 
     rl.set_target_fps(60);

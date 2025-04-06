@@ -38,12 +38,14 @@ fn main() {
     let mut ph = init_physics::<24, 24>().build();
 
     // Create floor rectangle physics body
-    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), 500.0, 100.0, 10.0);
-    floor.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+    ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), 500.0, 100.0, 10.0)
+        .borrowed_mut(|floor| floor.enabled = false); // Disable body state to convert it to static (no dynamics, but collisions)
 
     // Create obstacle circle physics body
-    let circle = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 45.0, 10.0);
-    circle.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+    ph.borrow_mut()
+        .create_physics_body_circle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 45.0, 10.0)
+        .borrowed_mut(|circle| circle.enabled = false); // Disable body state to convert it to static (no dynamics, but collisions)
 
     rl.set_target_fps(60);
 

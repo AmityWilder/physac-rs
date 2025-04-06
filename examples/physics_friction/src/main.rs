@@ -39,34 +39,42 @@ fn main() {
     let mut ph = init_physics::<24, 24>().build();
 
     // Create floor rectangle physics body
-    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0);
-    floor.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-    let wall = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32*0.8), 10.0, 80.0, 10.0);
-    wall.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+    ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0)
+        .borrowed_mut(|floor| floor.enabled = false); // Disable body state to convert it to static (no dynamics, but collisions)
+    ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32*0.8), 10.0, 80.0, 10.0)
+        .borrowed_mut(|wall| wall.enabled = false); // Disable body state to convert it to static (no dynamics, but collisions)
 
     // Create left ramp physics body
-    let rect_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0);
-    rect_left.borrowed_mut(|rect_left| {
-        rect_left.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-        rect_left.set_rotation(30.0*DEG2RAD as f32);
-    });
+    ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0)
+        .borrowed_mut(|rect_left| {
+            rect_left.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+            rect_left.set_rotation(30.0*DEG2RAD as f32);
+        });
 
     // Create right ramp  physics body
-    let rect_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 - 25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0);
-    rect_right.borrowed_mut(|rect_right| {
-        rect_right.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-        rect_right.set_rotation(330.0*DEG2RAD as f32);
-    });
+    ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(screen_width as f32 - 25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0)
+        .borrowed_mut(|rect_right| {
+            rect_right.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+            rect_right.set_rotation(330.0*DEG2RAD as f32);
+        });
 
     // Create dynamic physics bodies
-    let body_a = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0);
+    let body_a = ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0)
+        .clone();
     body_a.borrowed_mut(|body_a| {
         body_a.static_friction = 0.1;
         body_a.dynamic_friction = 0.1;
         body_a.set_rotation(30.0*DEG2RAD as f32);
     });
 
-    let body_b = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 - 35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0);
+    let body_b = ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(screen_width as f32 - 35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0)
+        .clone();
     body_b.borrowed_mut(|body_b| {
         body_b.static_friction = 1.0;
         body_b.dynamic_friction = 1.0;

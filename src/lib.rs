@@ -769,42 +769,38 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     /// Creates a new circle physics body with generic parameters
     ///
     /// Returns [`None`] if there are no available IDs
-    pub fn try_create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> Option<Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
+    pub fn try_create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> Option<&Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
         if let Some(new_id) = self.find_available_body_index() {
-            let new_body = Strong::new(PhysicsBodyData::default());
-
-            let new_weak_body = new_body.clone();
-            let mut new_body_data = new_body.borrow_mut();
-
             // Initialize new body with generic values
-            new_body_data.id = new_id;
-            new_body_data.enabled = true;
-            new_body_data.position = pos;
-            new_body_data.velocity = Vector2::zero();
-            new_body_data.force = Vector2::zero();
-            new_body_data.angular_velocity = 0.0;
-            new_body_data.torque = 0.0;
-            new_body_data.orient = 0.0;
-            new_body_data.shape = PHYSICS_CIRCLE { radius };
+            let mut new_body = PhysicsBodyData {
+                id: new_id,
+                enabled: true,
+                position: pos,
+                velocity: Vector2::zero(),
+                force: Vector2::zero(),
+                angular_velocity: 0.0,
+                torque: 0.0,
+                orient: 0.0,
+                shape: PHYSICS_CIRCLE { radius },
 
-            new_body_data.mass = (PI*radius as f64*radius as f64*density as f64) as f32;
-            new_body_data.inverse_mass = if new_body_data.mass != 0.0 { 1.0/new_body_data.mass } else { 0.0 };
-            new_body_data.inertia = new_body_data.mass*radius*radius;
-            new_body_data.inverse_inertia = if new_body_data.inertia != 0.0 { 1.0/new_body_data.inertia } else { 0.0 };
-            new_body_data.static_friction = 0.4;
-            new_body_data.dynamic_friction = 0.2;
-            new_body_data.restitution = 0.0;
-            new_body_data.use_gravity = true;
-            new_body_data.is_grounded = false;
-            new_body_data.freeze_orient = false;
-
-            drop(new_body_data);
+                mass: (PI*radius as f64*radius as f64*density as f64) as f32,
+                static_friction: 0.4,
+                dynamic_friction: 0.2,
+                restitution: 0.0,
+                use_gravity: true,
+                is_grounded: false,
+                freeze_orient: false,
+                ..Default::default()
+            };
+            new_body.inverse_mass = if new_body.mass != 0.0 { 1.0/new_body.mass } else { 0.0 };
+            new_body.inertia = new_body.mass*radius*radius;
+            new_body.inverse_inertia = if new_body.inertia != 0.0 { 1.0/new_body.inertia } else { 0.0 };
 
             // Add new body to bodies pointers array and update bodies count
-            self.bodies.push(new_body);
+            self.bodies.push(Strong::new(new_body));
 
             debug_print!("[PHYSAC] created polygon physics body id {new_id}");
-            Some(new_weak_body)
+            Some(self.bodies.last().expect("should have at least one element after pushing"))
         } else {
             debug_print!("[PHYSAC] new physics body creation failed because there is any available id to use");
             None
@@ -817,30 +813,16 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     ///
     /// This method may panic if there are no available IDs
     #[inline]
-    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
+    pub fn create_physics_body_circle(&mut self, pos: Vector2, radius: f32, density: f32) -> &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
         self.try_create_physics_body_circle(pos, radius, density).unwrap()
     }
 
     /// Creates a new rectangle physics body with generic parameters
     ///
     /// Returns [`None`] if there are no available IDs
-    pub fn try_create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> Option<Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
+    pub fn try_create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> Option<&Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
         if let Some(new_id) = self.find_available_body_index() {
-            let new_body = Strong::new(PhysicsBodyData::default());
-
-            let new_weak_body = new_body.clone();
-            let mut new_body_data = new_body.borrow_mut();
-
             // Initialize new body with generic values
-            new_body_data.id = new_id;
-            new_body_data.enabled = true;
-            new_body_data.position = pos;
-            new_body_data.velocity = Vector2::zero();
-            new_body_data.force = Vector2::zero();
-            new_body_data.angular_velocity = 0.0;
-            new_body_data.torque = 0.0;
-            new_body_data.orient = 0.0;
-
             let mut vertex_data = PolygonData::create_rectangle_polygon(pos, Vector2 { x: width, y: height });
 
             // Calculate centroid and moment of inertia
@@ -879,29 +861,37 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
                 vertex_data.positions[i].y -= center.y;
             }
 
-            new_body_data.shape = PHYSICS_POLYGON {
-                vertex_data,
-                transform: Mat2::radians(0.0),
+            let mut new_body = PhysicsBodyData {
+                id: new_id,
+                enabled: true,
+                position: pos,
+                velocity: Vector2::zero(),
+                force: Vector2::zero(),
+                angular_velocity: 0.0,
+                torque: 0.0,
+                orient: 0.0,
+                shape: PHYSICS_POLYGON {
+                    vertex_data,
+                    transform: Mat2::radians(0.0),
+                },
+                mass: density*area,
+                static_friction: 0.4,
+                dynamic_friction: 0.2,
+                restitution: 0.0,
+                use_gravity: true,
+                is_grounded: false,
+                freeze_orient: false,
+                ..Default::default()
             };
-
-            new_body_data.mass = density*area;
-            new_body_data.inverse_mass = if new_body_data.mass != 0.0 { 1.0/new_body_data.mass } else { 0.0 };
-            new_body_data.inertia = density*inertia;
-            new_body_data.inverse_inertia = if new_body_data.inertia != 0.0 { 1.0/new_body_data.inertia } else { 0.0 };
-            new_body_data.static_friction = 0.4;
-            new_body_data.dynamic_friction = 0.2;
-            new_body_data.restitution = 0.0;
-            new_body_data.use_gravity = true;
-            new_body_data.is_grounded = false;
-            new_body_data.freeze_orient = false;
-
-            drop(new_body_data);
+            new_body.inverse_mass = if new_body.mass != 0.0 { 1.0/new_body.mass } else { 0.0 };
+            new_body.inertia = density*inertia;
+            new_body.inverse_inertia = if new_body.inertia != 0.0 { 1.0/new_body.inertia } else { 0.0 };
 
             // Add new body to bodies pointers array and update bodies count
-            self.bodies.push(new_body);
+            self.bodies.push(Strong::new(new_body));
 
             debug_print!("[PHYSAC] created polygon physics body id {new_id}");
-            Some(new_weak_body)
+            Some(self.bodies.last().expect("should have at least one element after pushing"))
         } else {
             debug_print!("[PHYSAC] new physics body creation failed because there is any available id to use");
             None
@@ -914,29 +904,16 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     ///
     /// This method may panic if there are no available IDs
     #[inline]
-    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
+    pub fn create_physics_body_rectangle(&mut self, pos: Vector2, width: f32, height: f32, density: f32) -> &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
         self.try_create_physics_body_rectangle(pos, width, height, density).unwrap()
     }
 
     /// Creates a new polygon physics body with generic parameters
     ///
     /// Returns [`None`] if there are no available IDs
-    pub fn try_create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: usize, density: f32) -> Option<Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
+    pub fn try_create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: usize, density: f32) -> Option<&Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
         if let Some(new_id) = self.find_available_body_index() {
-            let new_body = Strong::new(PhysicsBodyData::default());
-
-            let new_weak_body = new_body.clone();
-            let mut new_body_data = new_body.borrow_mut();
-
             // Initialize new body with generic values
-            new_body_data.id = new_id;
-            new_body_data.enabled = true;
-            new_body_data.position = pos;
-            new_body_data.velocity = Vector2::zero();
-            new_body_data.force = Vector2::zero();
-            new_body_data.angular_velocity = 0.0;
-            new_body_data.torque = 0.0;
-            new_body_data.orient = 0.0;
             let mut vertex_data = PolygonData::create_random_polygon(radius, sides);
 
             // Calculate centroid and moment of inertia
@@ -974,28 +951,37 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
                 vertex_data.positions[i].y -= center.y;
             }
 
-            new_body_data.shape = PHYSICS_POLYGON {
-                vertex_data,
-                transform: Mat2::radians(0.0),
+            let mut new_body = PhysicsBodyData {
+                id: new_id,
+                enabled: true,
+                position: pos,
+                velocity: Vector2::zero(),
+                force: Vector2::zero(),
+                angular_velocity: 0.0,
+                torque: 0.0,
+                orient: 0.0,
+                shape: PHYSICS_POLYGON {
+                    vertex_data,
+                    transform: Mat2::radians(0.0),
+                },
+                mass: density*area,
+                static_friction: 0.4,
+                dynamic_friction: 0.2,
+                restitution: 0.0,
+                use_gravity: true,
+                is_grounded: false,
+                freeze_orient: false,
+                ..Default::default()
             };
-            new_body_data.mass = density*area;
-            new_body_data.inverse_mass = if new_body_data.mass != 0.0 { 1.0/new_body_data.mass } else { 0.0 };
-            new_body_data.inertia = density*inertia;
-            new_body_data.inverse_inertia = if new_body_data.inertia != 0.0 { 1.0/new_body_data.inertia } else { 0.0 };
-            new_body_data.static_friction = 0.4;
-            new_body_data.dynamic_friction = 0.2;
-            new_body_data.restitution = 0.0;
-            new_body_data.use_gravity = true;
-            new_body_data.is_grounded = false;
-            new_body_data.freeze_orient = false;
-
-            drop(new_body_data);
+            new_body.inverse_mass = if new_body.mass != 0.0 { 1.0/new_body.mass } else { 0.0 };
+            new_body.inertia = density*inertia;
+            new_body.inverse_inertia = if new_body.inertia != 0.0 { 1.0/new_body.inertia } else { 0.0 };
 
             // Add new body to bodies pointers array and update bodies count
-            self.bodies.push(new_body);
+            self.bodies.push(Strong::new(new_body));
 
             debug_print!("[PHYSAC] created polygon physics body id {new_id}");
-            Some(new_weak_body)
+            Some(self.bodies.last().expect("should have at least one element after pushing"))
         } else {
             debug_print!("[PHYSAC] new physics body creation failed because there is any available id to use");
             None
@@ -1008,7 +994,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     ///
     /// This method may panic if there are no available IDs
     #[inline]
-    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: usize, density: f32) -> Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
+    pub fn create_physics_body_polygon(&mut self, pos: Vector2, radius: f32, sides: usize, density: f32) -> &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
         self.try_create_physics_body_polygon(pos, radius, sides, density).unwrap()
     }
 

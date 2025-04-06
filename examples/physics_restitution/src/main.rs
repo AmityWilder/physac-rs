@@ -37,16 +37,19 @@ fn main() {
     let mut ph = init_physics::<24, 24>().build();
 
     // Create floor rectangle physics body
-    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0);
-    floor.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-    floor.borrow_mut().restitution = 0.9;
+    ph.borrow_mut()
+        .create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0)
+        .borrowed_mut(|floor| {
+            floor.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
+            floor.restitution = 0.9;
+        });
 
     // Create circles physics body
-    let circle_a = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32*0.25, screen_height as f32/2.0), 30.0, 10.0);
+    let circle_a = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32*0.25, screen_height as f32/2.0), 30.0, 10.0).clone();
     circle_a.borrow_mut().restitution = 0.0;
-    let circle_b = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32*0.5, screen_height as f32/2.0), 30.0, 10.0);
+    let circle_b = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32*0.5, screen_height as f32/2.0), 30.0, 10.0).clone();
     circle_b.borrow_mut().restitution = 0.5;
-    let circle_c = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32*0.75, screen_height as f32/2.0), 30.0, 10.0);
+    let circle_c = ph.borrow_mut().create_physics_body_circle(Vector2::new(screen_width as f32*0.75, screen_height as f32/2.0), 30.0, 10.0).clone();
     circle_c.borrow_mut().restitution = 0.9;
 
     rl.set_target_fps(60);
