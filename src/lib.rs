@@ -242,6 +242,8 @@ pub struct PhysicsBodyData<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usi
     pub freeze_orient: bool,
     /// Physics body shape information (type, radius, vertices, normals)
     pub shape: PhysicsShape<MAX_VERTICES, CIRCLE_VERTICES>,
+    /// The body exists in Physac
+    is_simulating: bool,
 }
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES> {
     const fn new() -> Self {
@@ -265,6 +267,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MA
             is_grounded: false,
             freeze_orient: false,
             shape: PhysicsShape::new(),
+            is_simulating: true,
         }
     }
 }
@@ -359,7 +362,7 @@ pub mod phys_rc {
             }
         }
 
-        /// Get a weak body from a strong one
+        /// Get a weak reference from a strong one
         pub fn downgrade(&self) -> Weak<T> {
             let inner = &self.inner;
             Weak {
@@ -472,19 +475,16 @@ pub mod phys_rc {
             n
         }
 
-        /// Try to get a strong body from a weak one
+        /// Try to get a strong reference from a weak one
         ///
-        /// Returns [`None`] if the body has been destroyed
-        ///
-        /// **Note:** Holding onto a `StrongPhysicsBody` extends the physics body's lifetime, but it will stop
-        /// receiving physics ticks once it has been destroyed--even if you are still holding onto one of these
+        /// Returns [`None`] if no Strong references exist for the object
         pub fn upgrade(&self) -> Option<Strong<T>> {
             self.inner.upgrade().map(|inner| Strong { inner })
         }
 
         /// Upgrades and borrows the inner value, applying the closure to that
         ///
-        /// Returns [`None`] if the body has been destroyed
+        /// Returns [`None`] if no Strong references exist for the object
         #[must_use]
         pub fn borrowed<U, F>(&self, f: F) -> Option<U>
         where
@@ -495,13 +495,24 @@ pub mod phys_rc {
 
         /// Upgrades and borrows the inner value, applying the closure to that
         ///
-        /// Returns [`None`] if the body has been destroyed
+        /// Returns [`None`] if no Strong references exist for the object
         #[must_use]
         pub fn borrowed_mut<U, F>(&self, f: F) -> Option<U>
         where
             F: FnOnce(&mut T) -> U
         {
             self.upgrade().map(|x| x.borrowed_mut(f))
+        }
+    }
+
+    impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Weak<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
+        /// Try to get a strong reference from a weak one
+        ///
+        /// Returns [`None`] if no Strong references exist for the body, or if the body has been destroyed
+        pub fn sim_upgrade(&self) -> Option<Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
+            self.inner.upgrade()
+                .filter(|body| body.read().is_ok_and(|body| body.is_simulating()))
+                .map(|inner| Strong { inner })
         }
     }
 }
@@ -1274,6 +1285,11 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 }
 
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES> {
+    /// Returns true if the body is still being simulated, returns false if it has been destroyed
+    pub fn is_simulating(&self) -> bool {
+        self.is_simulating
+    }
+
     /// Adds a force to a physics body
     pub fn add_force(&mut self, force: Vector2) {
         self.force += force;
@@ -1330,6 +1346,18 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MA
     /// This method may panic if `vertex` index is out of bounds
     pub fn get_physics_shape_vertex(&self, vertex: usize) -> Vector2 {
         self.try_get_physics_body_shape_vertex(vertex).unwrap()
+    }
+
+    /// Returns an iterator over the transformed positions of a body shape (body position + vertex transformed position)
+    pub fn vertices_iter(&self) -> impl DoubleEndedIterator<Item = Vector2> + ExactSizeIterator {
+        (0..self.get_physics_shape_vertices_count())
+            .map(|i| self.get_physics_shape_vertex(i))
+    }
+
+    /// Returns an iterator over the transformed positions of a body shape (body position + vertex transformed position), repeating the first vertex one more time after the final vertex
+    pub fn vertices_iter_closed(&self) -> impl DoubleEndedIterator<Item = Vector2> {
+        self.vertices_iter()
+            .chain(std::iter::once_with(|| self.get_physics_shape_vertex(0)))
     }
 
     /// Returns the physics body shape type (PHYSICS_CIRCLE or PHYSICS_POLYGON)
