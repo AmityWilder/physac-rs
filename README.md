@@ -104,6 +104,15 @@ fn main() {
 ```
 See the [hello_physics](./examples/hello_physics/) example to run the code above.
 
+# Features
+
+| Feature Flag  | Description                                                                                                                                                                                                                               | Default                               |
+|:-------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------:|
+| `raylib`      | Use raylib-rs in the library. If disabled, data types defined on raylib are defined internally in the library and input management and drawing functions must be provided by the user (check library implementation for further details). | Enabled                               |
+| `sync`        | The library will use `std::sync` instead of `std::rc` and `std::cell`.                                                                                                                                                                    | Enabled transitively by `phys_thread` |
+| `phys_thread` | If disabled, the library won't use `std::thread` and user must create a secondary thread to call `run_physics_step()`, or call it in the main thread if `sync` is disabled. <br/> Requres and automatically enables `sync`.               | Enabled                               |
+| `debug`       | Traces log messages when creating and destroying physics bodies and detects errors in physics calculations and reference exceptions; it is useful for debug purposes.                                                                     | Disabled                              |
+
 # Thread Safety
 
 Physac is inherently multithreading-compatible. In the C implementation, this is accomplished with statics and raw pointers. In the Rust version, some additional steps are needed to ensure safeness. This is accomplished with [`std::sync::Arc`][Arc], [`std::sync::Weak`][syncWeak], and [`std::sync::RwLock`][RwLock] (which have been abstracted into `Strong` and `Weak` to enable compatibility between the multithreaded (`sync`) and single-threaded (`rc`) implementations).
