@@ -371,8 +371,7 @@ pub mod phys_rc {
         }
 
         /// Try to get a temporary reference to the body, returning an error if the resource is poisoned
-        ///
-        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         pub fn read(&self) -> std::sync::LockResult<PhysacReadGuard<'_, T>> {
             #[cfg(feature = "sync")] {
                 self.inner.read()
@@ -382,8 +381,7 @@ pub mod phys_rc {
         }
 
         /// Try to get a temporary mutable reference to the body, returning an error if the resource is poisoned
-        ///
-        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         pub fn write(&self) -> std::sync::LockResult<PhysacWriteGuard<'_, T>> {
             #[cfg(feature = "sync")] {
                 self.inner.write()
@@ -393,8 +391,7 @@ pub mod phys_rc {
         }
 
         /// Get a temporary reference to the body
-        ///
-        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         #[cfg_attr(feature = "sync", doc = "\n # Panics\n\n This method may panic if another thread panicked while mutably borrowing this object")]
         pub fn borrow(&self) -> PhysacReadGuard<'_, T> {
             #[cfg(feature = "sync")] {
@@ -405,8 +402,7 @@ pub mod phys_rc {
         }
 
         /// Get a temporary mutable reference to the body
-        ///
-        /// **Note:** Physics cannot tick while any body is being borrowed, so try not to borrow across ticks
+        #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         #[cfg_attr(feature = "sync", doc = "\n # Panics\n\n This method may panic if another thread panicked while mutably borrowing this object")]
         pub fn borrow_mut(&self) -> PhysacWriteGuard<'_, T> {
             #[cfg(feature = "sync")] {
@@ -416,7 +412,8 @@ pub mod phys_rc {
             }
         }
 
-        /// Get a temporary reference to the body
+        /// Apply a closure on a temporary reference to the body
+        #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         #[cfg_attr(feature = "sync", doc = "\n # Panics\n\n This method may panic if another thread panicked while mutably borrowing this object")]
         pub fn borrowed<U, F>(&self, f: F) -> U
         where
@@ -429,7 +426,8 @@ pub mod phys_rc {
             }
         }
 
-        /// Get a temporary mutable reference to the body
+        /// Apply a closure on a temporary mutable reference to the body
+        #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         #[cfg_attr(feature = "sync", doc = "\n # Panics\n\n This method may panic if another thread panicked while mutably borrowing this object")]
         pub fn borrowed_mut<U, F>(&self, f: F) -> U
         where
