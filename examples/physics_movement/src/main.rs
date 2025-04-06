@@ -23,38 +23,38 @@ const VELOCITY: f32 = 0.5;
 fn main() {
     // Initialization
     //--------------------------------------------------------------------------------------
-    let mut screenWidth = 800;
-    let mut screenHeight = 450;
+    let screen_width = 800;
+    let screen_height = 450;
 
     let (mut rl, thread) = init()
-        .size(screenWidth, screenHeight)
+        .size(screen_width, screen_height)
         .title("[physac] - Body controller demo")
         .msaa_4x()
         .build();
 
     // Physac logo drawing position
-    let mut logo_x = screenWidth - rl.measure_text("Physac", 30) - 10;
-    let mut logo_y = 15;
+    let logo_x = screen_width - rl.measure_text("Physac", 30) - 10;
+    let logo_y = 15;
 
     // Initialize physics and default physics bodies
-    let mut ph = init_physics();
+    let mut ph = init_physics::<24, 24>().build();
 
     // Create floor and walls rectangle physics body
-    let mut floor = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screenWidth as f32/2.0, screenHeight as f32), screenWidth as f32, 100.0, 10.0)).unwrap();
-    let mut platformLeft = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screenWidth as f32*0.25, screenHeight as f32*0.6), screenWidth as f32*0.25, 10.0, 10.0)).unwrap();
-    let mut platformRight = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screenWidth as f32*0.75, screenHeight as f32*0.6), screenWidth as f32*0.25, 10.0, 10.0)).unwrap();
-    let mut wallLeft = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(-5.0, screenHeight as f32/2.0), 10.0, screenHeight as f32, 10.0)).unwrap();
-    let mut wallRight = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screenWidth as f32 + 5.0, screenHeight as f32/2.0), 10.0, screenHeight as f32, 10.0)).unwrap();
+    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0);
+    let platform_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32*0.25, screen_height as f32*0.6), screen_width as f32*0.25, 10.0, 10.0);
+    let platform_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32*0.75, screen_height as f32*0.6), screen_width as f32*0.25, 10.0, 10.0);
+    let wall_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(-5.0, screen_height as f32/2.0), 10.0, screen_height as f32, 10.0);
+    let wall_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 + 5.0, screen_height as f32/2.0), 10.0, screen_height as f32, 10.0);
 
     // Disable dynamics to floor and walls physics bodies
     floor.borrow_mut().enabled = false;
-    platformLeft.borrow_mut().enabled = false;
-    platformRight.borrow_mut().enabled = false;
-    wallLeft.borrow_mut().enabled = false;
-    wallRight.borrow_mut().enabled = false;
+    platform_left.borrow_mut().enabled = false;
+    platform_right.borrow_mut().enabled = false;
+    wall_left.borrow_mut().enabled = false;
+    wall_right.borrow_mut().enabled = false;
 
     // Create movement physics body
-    let mut body = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screenWidth as f32/2.0, screenHeight as f32/2.0), 50.0, 50.0, 1.0)).unwrap();
+    let body = ph.borrowed_mut(|ph| ph.create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32/2.0), 50.0, 50.0, 1.0));
     body.borrow_mut().freeze_orient = true;  // Constrain body rotation to avoid little collision torque amounts
 
     rl.set_target_fps(60);
@@ -75,6 +75,9 @@ fn main() {
         if rl.is_key_down(KeyboardKey::KEY_UP) && body.borrow().is_grounded {
             body.borrow_mut().velocity.y = -VELOCITY*4.0;
         }
+
+        #[cfg(not(feature = "phys_thread"))]
+        ph.borrow_mut().run_physics_step();
         //----------------------------------------------------------------------------------
 
         // Draw
@@ -84,25 +87,24 @@ fn main() {
 
             d.clear_background(Color::BLACK);
 
-            d.draw_fps(screenWidth - 90, screenHeight - 30);
+            d.draw_fps(screen_width - 90, screen_height - 30);
 
             // Draw created physics bodies
-            let mut bodies_count = ph.borrow().get_physics_bodies_count();
-            for i in 0..bodies_count {
-                let mut body = ph.borrow().get_physics_body(i).unwrap();
+            ph.borrowed(|ph| {
+                for body in ph.physics_body_iter() {
+                    let vertex_count = body.get_physics_shape_vertices_count();
+                    for j in 0..vertex_count {
+                        // Get physics bodies shape vertices to draw lines
+                        // Note: get_physics_shape_vertex() already calculates rotation transformations
+                        let vertex_a = body.get_physics_shape_vertex(j);
 
-                let mut vertex_count = ph.borrow().get_physics_shape_vertices_count(i).unwrap();
-                for j in 0..vertex_count {
-                    // Get physics bodies shape vertices to draw lines
-                    // Note: body.get_physics_shape_vertex() already calculates rotation transformations
-                    let mut vertex_a = body.borrowed(|body| body.get_physics_shape_vertex(j).unwrap()).unwrap();
+                        let jj = next_idx(j, vertex_count);   // Get next vertex or first to close the shape
+                        let vertex_b = body.get_physics_shape_vertex(jj);
 
-                    let mut jj = next_idx(j, vertex_count);   // Get next vertex or first to close the shape
-                    let mut vertex_b = body.borrowed(|body| body.get_physics_shape_vertex(jj).unwrap()).unwrap();
-
-                    d.draw_line_v(vertex_a, vertex_b, Color::GREEN);     // Draw a line between two vertex positions
+                        d.draw_line_v(vertex_a, vertex_b, Color::GREEN);     // Draw a line between two vertex positions
+                    }
                 }
-            }
+            });
 
             d.draw_text("Use 'ARROWS' to move player", 10, 10, 10, Color::WHITE);
 

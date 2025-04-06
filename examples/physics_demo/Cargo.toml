@@ -5,4 +5,8 @@ edition = "2024"
 
 [dependencies]
 raylib = "5.5"
-physac = { path = "../../", features = ["raylib"] }
+physac = { path = "../../", features = ["raylib", "debug"] }
+
+[features]
+default = ["phys_thread"]
+phys_thread = ["physac/phys_thread"]

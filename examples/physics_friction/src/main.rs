@@ -16,7 +16,8 @@
 ********************************************************************************************/
 
 use raylib::prelude::*;
-use physac::{DEG2RAD, *};
+use physac::prelude::*;
+use ffi::DEG2RAD;
 
 fn main() {
     // Initialization
@@ -35,41 +36,41 @@ fn main() {
     let logo_y = 15;
 
     // Initialize physics and default physics bodies
-    let mut ph = init_physics::<24>().build();
+    let mut ph = init_physics::<24, 24>().build();
 
     // Create floor rectangle physics body
-    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0).unwrap();
+    let floor = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32), screen_width as f32, 100.0, 10.0);
     floor.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-    let wall = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32*0.8), 10.0, 80.0, 10.0).unwrap();
+    let wall = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32/2.0, screen_height as f32*0.8), 10.0, 80.0, 10.0);
     wall.borrow_mut().enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
 
     // Create left ramp physics body
-    let rect_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0).unwrap();
+    let rect_left = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0);
     rect_left.borrowed_mut(|rect_left| {
         rect_left.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-        rect_left.set_rotation(30.0*DEG2RAD);
+        rect_left.set_rotation(30.0*DEG2RAD as f32);
     });
 
     // Create right ramp  physics body
-    let rect_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 - 25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0).unwrap();
+    let rect_right = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 - 25.0, screen_height as f32 - 5.0), 250.0, 250.0, 10.0);
     rect_right.borrowed_mut(|rect_right| {
         rect_right.enabled = false; // Disable body state to convert it to static (no dynamics, but collisions)
-        rect_right.set_rotation(330.0*DEG2RAD);
+        rect_right.set_rotation(330.0*DEG2RAD as f32);
     });
 
     // Create dynamic physics bodies
-    let body_a = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0).unwrap();
+    let body_a = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0);
     body_a.borrowed_mut(|body_a| {
         body_a.static_friction = 0.1;
         body_a.dynamic_friction = 0.1;
-        body_a.set_rotation(30.0*DEG2RAD);
+        body_a.set_rotation(30.0*DEG2RAD as f32);
     });
 
-    let body_b = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 - 35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0).unwrap();
+    let body_b = ph.borrow_mut().create_physics_body_rectangle(Vector2::new(screen_width as f32 - 35.0, screen_height as f32*0.6), 40.0, 40.0, 10.0);
     body_b.borrowed_mut(|body_b| {
         body_b.static_friction = 1.0;
         body_b.dynamic_friction = 1.0;
-        body_b.set_rotation(330.0*DEG2RAD);
+        body_b.set_rotation(330.0*DEG2RAD as f32);
     });
 
     rl.set_target_fps(60);
@@ -79,7 +80,8 @@ fn main() {
     while !rl.window_should_close() {   // Detect window close button or ESC key
         // Update
         //----------------------------------------------------------------------------------
-        // ...
+        #[cfg(not(feature = "phys_thread"))]
+        ph.borrow_mut().run_physics_step();
         //----------------------------------------------------------------------------------
 
         // Draw
@@ -92,22 +94,21 @@ fn main() {
             d.draw_fps(screen_width - 90, screen_height - 30);
 
             // Draw created physics bodies
-            let bodies_count = ph.borrow().get_physics_bodies_count();
-            for i in 0..bodies_count {
-                if let Some(body) = ph.borrow().get_physics_body(i) {
-                    let vertex_count = ph.borrow().get_physics_shape_vertices_count(i).unwrap();
+            ph.borrowed(|ph| {
+                for body in ph.physics_body_iter() {
+                    let vertex_count = body.get_physics_shape_vertices_count();
                     for j in 0..vertex_count {
                         // Get physics bodies shape vertices to draw lines
-                        // Note: ph.get_physics_shape_vertex() already calculates rotation transformations
-                        let vertex_a = ph.borrow().get_physics_body_shape_vertex(&body, j).unwrap();
+                        // Note: get_physics_shape_vertex() already calculates rotation transformations
+                        let vertex_a = body.get_physics_shape_vertex(j);
 
-                        let jj = if (j + 1) < vertex_count { j + 1 } else { 0 };   // Get next vertex or first to close the shape
-                        let vertex_b = ph.borrow().get_physics_body_shape_vertex(&body, jj).unwrap();
+                        let jj = next_idx(j, vertex_count);   // Get next vertex or first to close the shape
+                        let vertex_b = body.get_physics_shape_vertex(jj);
 
                         d.draw_line_v(vertex_a, vertex_b, Color::GREEN);     // Draw a line between two vertex positions
                     }
                 }
-            }
+            });
 
             d.draw_rectangle(0, screen_height - 49, screen_width, 49, Color::BLACK);
 
