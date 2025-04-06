@@ -20,7 +20,7 @@ While this library tries to mirror the C API, some changes have been made in ord
 
 - Most of the Physac API is exposed through `Physac`, which is used for storing all fields which the original C implementation has as static globals. This ensures thread safety, and can even allow multiple independent instances of Physac to safely run in the same program simultaneously.
 
-- If the `sync` feature flag is enabled (which is the default), `Physac` is borrowed through the `PhysacHandle` to prevent race conditions between threads. If it is not, `PhysacHandle` will implement `std::ops::DerefMut`, which allows `Physac` to be accessed directly by reference without borrowing (the borrow functions will still be available in case you would like to write your code in a way that works both with *and* without the `sync` feature flag).
+- If the `sync` feature flag is enabled (which is the default), `Physac` is borrowed through the `PhysacHandle` to prevent race conditions between threads. If the `sync` feature flag is not enabled, `PhysacHandle` will implement `std::ops::DerefMut`, which allows `Physac` to be accessed directly by reference without borrowing (the borrow functions will still be available in case you would like to write your code in a way that works both with *and* without the `sync` feature flag).
 
 - A `PhysacHandle` can be obtained through the `init_physics()` function, which will allow you to `build` the physics environment with some of the settings normally provided to Physac through `#define`s.
 
@@ -32,6 +32,8 @@ While this library tries to mirror the C API, some changes have been made in ord
 
   The physics thread can also finish if any unrecoverable errors occur on that thread, such as running out of IDs or a resource being poisoned (i.e. another thread panicks while mutably borrowing a physics body or `Physac`).
 
+- See the section on [Thread Safety](#thread-safety) for important information about one of the more influencial differences between the C and Rust implementations of Physac.
+
 # Build Dependencies
 
 Requires the Rust standard library. Optionally requires [raylib-rs][] by default.
@@ -40,6 +42,7 @@ Requires the Rust standard library. Optionally requires [raylib-rs][] by default
 
 ```toml
 [dependencies]
+raylib = { version = "*" } # optional
 physac = { version = "0.1" }
 ```
 
@@ -99,11 +102,11 @@ fn main() {
     }
 }
 ```
-See the [hello_physics](./examples/hello_physics/) example to run the code above
+See the [hello_physics](./examples/hello_physics/) example to run the code above.
 
 # Thread Safety
 
-Physac is inherently multithreading-compatible. In the C implementation, this is accomplished with statics and raw pointers. In the Rust version, some additional steps are needed to ensure safeness. This is accomplished with [`std::sync::Arc`][Arc], [`std::sync::Weak`][syncWeak], and [`std::sync::RwLock`][RwLock] (which have been abstracted into `Strong` and `Weak` to enable compatibility between the multithreaded (`sync`) single-threaded (`rc`) implementations).
+Physac is inherently multithreading-compatible. In the C implementation, this is accomplished with statics and raw pointers. In the Rust version, some additional steps are needed to ensure safeness. This is accomplished with [`std::sync::Arc`][Arc], [`std::sync::Weak`][syncWeak], and [`std::sync::RwLock`][RwLock] (which have been abstracted into `Strong` and `Weak` to enable compatibility between the multithreaded (`sync`) and single-threaded (`rc`) implementations).
 
 ---
 
@@ -132,9 +135,10 @@ See [`std::rc::Rc`][Rc] and [`std::sync::Arc`][Arc] for more information about t
 
 ---
 
-**Important:** Remember not to **borrow** physics bodies (`Strong` and `Weak` references are fine, just not `Read/WriteGuard`s) nor `Physac`, across multiple frames.
+**Important:** Remember not to **borrow** physics bodies, nor `Physac`, across multiple frames. Storing `Strong` and `Weak` references across frames is fine, just not `Read/WriteGuard`s.
 
-The physics thread will block (wait its turn) until it can borrow a physics body mutably, and will do so multiple times for every physics body at some point during a physics step.
+When the physics thread needs to borrow a physics body, it will block (wait its turn) until no thread is borrowing it exclusively. The physics thread will mutably borrow *every* physics body being simulated at multiple points during each physics step.
+
 If you are borrowing a physics body for longer than a frame, there's a high likelihood that the physics thread will borrow another body that you need for rendering the frame, and hold onto it until you give up the one you're borrowing. This can lead to a *deadlock*, where the main thread can't borrow a particular physics body until physics thread is finished borrowing it and the physics thread can't finish borrowing it until you finish borrowing yours. This can cause the program to freeze and stop responding, because the main thread needs to finish rendering in order for the program to stay responsive.
 
 It is perfectly reasonable to borrow `Physac` and/or one or multiple `PhysicBody`s for the full duration of a function--as long as the borrow(s) are given up during the same frame. \
