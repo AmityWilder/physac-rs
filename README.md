@@ -36,14 +36,19 @@ While this library tries to mirror the C API, some changes have been made in ord
 
 # Build Dependencies
 
-Requires the Rust standard library. Optionally requires [raylib-rs][] by default.
+Requires the Rust standard library. Optionally requires [raylib-rs][].
 
 1. Add the dependency to your `Cargo.toml`
 
 ```toml
 [dependencies]
-raylib = { version = "*" } # optional
 physac = { version = "0.1" }
+```
+or
+```toml
+[dependencies]
+raylib = { version = "5.5" } # can be any version >=1.0
+physac = { version = "0.1", features = ["raylib"] }
 ```
 
 2. Start coding
