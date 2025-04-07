@@ -46,12 +46,13 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //!
 //! # Example
 //!
-#![cfg_attr(feature = "raylib", doc = " ```")]
-#![cfg_attr(not(feature = "raylib"), doc = " ```ignore")]
+//! ```
+//! # #[cfg(feature = "raylib")]
 //! use raylib::prelude::*;
 //! use physac::prelude::*;
 //!
 //! fn main() {
+//! #   #[cfg(feature = "raylib")]
 //!     let (mut rl, thread) = raylib::init()
 //!         .size(640, 480)
 //!         .title("Hello, Physics")
@@ -62,19 +63,20 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //!         .build();
 //!
 //!     let ball = ph.borrow_mut()
-//!         .create_physics_body_circle(Vector2::new(320.0, 240.0), 45.0, 10.0)
+//!         .create_physics_body_circle(Vector2 { x: 320.0, y: 240.0 }, 45.0, 10.0)
 //!         .clone();
 //!
 //!     ball.borrow_mut().restitution = 0.9;
 //!     let ball_id = ball.borrow().id;
 //!
 //!     ph.borrow_mut()
-//!         .create_physics_body_rectangle(Vector2::new(320.0, 450.0), 620.0, 40.0, 10.0)
+//!         .create_physics_body_rectangle(Vector2 { x: 320.0, y: 450.0 }, 620.0, 40.0, 10.0)
 //!         .borrowed_mut(|floor| {
 //!             floor.enabled = false;
 //!             floor.restitution = 0.9;
 //!         });
 //!
+//! #   #[cfg(feature = "raylib")]
 //!     while !rl.window_should_close() {
 //!         if rl.is_key_pressed(KeyboardKey::KEY_SPACE) {
 //!             ball.borrowed_mut(|ball| ball.velocity.y -= 1.0)
