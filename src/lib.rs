@@ -1,6 +1,24 @@
+/* physac-rs
+   lib.rs - Library code (Rust implementation)
+
+Copyright (c) 2024 Amy Wilder (@AmityWilder)
+
+This software is provided "as-is", without any express or implied warranty. In no event will the authors be held liable for any damages arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and redistribute it freely, subject to the following restrictions:
+
+    1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+
+    2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+
+    3. This notice may not be removed or altered from any source distribution.
+
+physac-rs is a conversion of Physac into the Rust programming language. Amy Wilder makes no claim on the original Physac software itself, only its conversion from C into Rust.
+*/
+
 //! # physac-rs
 //!
-//! physac-rs is a Rust-native translation of Physac with built-in support for raylib-rs. Raylib is not *required* however, and can be disabled by disabling the `raylib` feature flag in your `Cargo.toml` file.
+//! physac-rs is a Rust-native translation of [Physac][] with built-in support for [raylib-rs][]. Raylib is not *required* however, and can be disabled by disabling the `raylib` feature flag in your `Cargo.toml` file.
 //!
 //! See the examples directory for usage examples converted 1:1 from the original C implementation of Physac.
 //!
@@ -28,10 +46,12 @@
 //!
 //! # Example
 //!
-//! ```rs
+//! ```
+//! # #[cfg(feature = "raylib")]
 //! use raylib::prelude::*;
 //! use physac::prelude::*;
 //!
+//! # #[cfg(feature = "raylib")]
 //! fn main() {
 //!     let (mut rl, thread) = raylib::init()
 //!         .size(640, 480)
@@ -108,9 +128,9 @@
 //!   **Note:** `read()` and `write()` *do* still panic if Rust's "no-mutable-aliases" rule is broken. They only make *poison* errors recoverable.
 //!
 //! If another thread is currently borrowing the body, these functions will block (wait) until the other thread is finished borrowing it. If you try to borrow a body while it is *already* borrowed by the same thread, the program may panic.
-//! ```rs
-//! let body_a = body.borrow_mut();
-//! let body_b = body.borrow_mut(); // `body` is already borrowed in `body_a`
+//! ```ignore
+//! let mut body_a = body.borrow_mut();
+//! let mut body_b = body.borrow_mut(); // `body` is already borrowed in `body_a`
 //! ```
 //! See [`std::rc::Rc`] and [`std::sync::Arc`] for more information about this behavior.
 //!
@@ -141,90 +161,95 @@
 //!
 //! ### Example
 //!
-//! Before
-//! ```rs
-//! ph.borrow_mut().do_thing();
+//! **Before**
+//! ```ignore
+//! do_thing(&mut *ph.borrow_mut());
 //! // because Physac is only borrowed long enough to do_thing(), the borrow will drop when it's finished
 //! // and the physics thread will be free to update simultaneously with the following lines.
-//! if body1.borrow().some_condition() {
+//! if some_condition(&*body1.borrow()) {
 //!     // the physics thread *may have* modified body1 in the split-second since some_condition was tested
-//!     body1.borrow_mut().modification1();
+//!     modification1(&mut *body1.borrow_mut());
 //!     // the physics thread *may have* modified body1 in the split-second since modification1() occurred
-//!     body1.borrow_mut().modification2();
+//!     modification2(&mut *body1.borrow_mut());
 //! }
 //! ```
-//! After
-//! ```rs
+//! **After**
+//! ```ignore
 //! ph.borrowed_mut(|ph| {
 //!     // borrowed_mut locks ph, blocking the physics thread, until this closure finishes.
-//!     ph.do_thing();
+//!     do_thing(&mut *ph);
 //!     body1.borrow_mut(|body1| {
 //!         // even though the physics thread can't do anything while Physac is borrowed, other threads with access
 //!         // to your physics bodies may still try to borrow them. by borrowing them for the entire time you need
 //!         // uninterrupted access to them, you can ensure they won't be modified elsewhere.
-//!         if body1.some_condition() {
-//!             body1.modification1();
-//!             body1.modification2();
+//!         if some_condition(&*body1) {
+//!             modification1(&mut *body1);
+//!             modification2(&mut *body1);
 //!         }
 //!     }); // borrow of body1 drops, so other threads are free to use it again.
 //! }); // borrow of ph drops, so the physics thread is free to update again.
 //! ```
-//! After (using `borrow_mut()` instead of `borrowed_mut()`, so that you can still `return`--but be careful not to let borrows overstay their welcome!)
-//! ```rs
+//! **After** (using `borrow_mut()` instead of `borrowed_mut()`, so that you can still `return`--but be careful not to let borrows overstay their welcome!)
+//! ```ignore
 //! {
 //!     let mut ph = ph.borrow_mut();
 //!     // note that this does not necessarily guarantee ph is still borrowed after this line like borrowed_mut() would
-//!     ph.do_thing();
+//!     do_thing(&mut *ph);
 //!     {
 //!         let mut body1 = body1.borrow_mut();
-//!         if body1.some_condition() {
-//!             body1.modification1();
-//!             body1.modification2();
+//!         if some_condition(&*body1) {
+//!             modification1(&mut *body1);
+//!             modification2(&mut *body1);
 //!         }
 //!     }
 //! }
 //! ```
+//!
+//! [Physac]: https://github.com/victorfisac/Physac
+//! [raylib-rs]: https://github.com/raylib-rs/raylib-rs
 
+#![deny(
+    clippy::missing_safety_doc,
+)]
+#![warn(
+    clippy::missing_panics_doc,
+    clippy::missing_errors_doc,
+    missing_docs,
+    rustdoc::all,
+    clippy::doc_markdown,
+    clippy::pedantic,
+)]
+#![allow(
+    clippy::inline_always,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::if_not_else,
+    clippy::similar_names,
+)]
 
-/*
-VERY THANKS TO:
-    - raysan5: helped with library design
-    - ficoos: added support for Linux
-    - R8D8: added support for Linux
-    - jubalh: fixed implementation of time calculations
-    - a3f: fixed implementation of time calculations
-    - define-private-public: added support for OSX
-    - pamarcos: fixed implementation of physics steps
-    - noshbar: fixed some memory leaks
-
-LICENSE: zlib/libpng
-
-Copyright (c) 2016-2025 Victor Fisac (github: @victorfisac)
-
-This software is provided "as-is", without any express or implied warranty. In no event will the authors be held liable for any damages arising from the use of this software.
-
-Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and redistribute it freely, subject to the following restrictions:
-
-    1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
-
-    2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
-
-    3. This notice may not be removed or altered from any source distribution.
-*/
-
-#![warn(clippy::missing_panics_doc, clippy::missing_safety_doc, clippy::missing_errors_doc)]
-
+/// The physac-rs prelude.
+///
+/// This prelude module is for bringing many commonly-used types, functions, and constants into scope all at once.
+///
+/// # Example
+///
+/// ```
+/// use physac::prelude::*;
+/// ```
 pub mod prelude {
     pub use crate::*;
 }
 
 #[cfg(feature = "raylib")]
-use raylib::prelude::Vector2;
+pub use raylib::prelude::Vector2;
 
 #[cfg(not(feature = "raylib"))]
+/// A 2D direction with magnitude.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vector2 {
+    /// Horizontal
     pub x: f32,
+    /// Vertical
     pub y: f32,
 }
 
@@ -239,10 +264,7 @@ use std::{
 
 
 #[cfg(feature = "sync")]
-use std::sync::{self, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-#[cfg(not(feature = "sync"))]
-use std::{rc::{self, Rc}, cell::{RefCell, Ref, RefMut}};
+use std::sync::{Arc, RwLock};
 
 //----------------------------------------------------------------------------------
 // Defines and Macros
@@ -258,7 +280,9 @@ macro_rules! debug_print {
     };
 }
 
+/// Adds 1 to `index`, wrapping around to 0 if the next index would be out of bounds
 #[inline(always)]
+#[must_use]
 pub const fn next_idx(index: usize, len: usize) -> usize {
     if (index + 1) < len { index + 1 } else { 0 }
 }
@@ -266,16 +290,22 @@ pub const fn next_idx(index: usize, len: usize) -> usize {
 //----------------------------------------------------------------------------------
 // Types and Structures Definition
 //----------------------------------------------------------------------------------
-// Mat2 type (used for polygon shape rotation matrix)
+/// Mat2 type (used for polygon shape rotation matrix)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Mat2 {
+    /// Row 0, column 0
     pub m00: f32,
+    /// Row 0, column 1
     pub m01: f32,
+    /// Row 1, column 0
     pub m10: f32,
+    /// Row 1, column 1
     pub m11: f32,
 }
 impl Mat2 {
+    /// Identity matrix constant
     #[inline]
+    #[must_use]
     pub const fn identity() -> Self {
         Self {
             m00: 1.0, m01: 0.0,
@@ -284,6 +314,7 @@ impl Mat2 {
     }
 
     /// Creates a matrix 2x2 from a given radians value
+    #[must_use]
     pub fn radians(radians: f32) -> Mat2 {
         let (s, c) = radians.sin_cos();
 
@@ -301,8 +332,9 @@ impl Mat2 {
         self.m10 = sin; self.m11 = cos;
     }
 
-    // Returns the transpose of a given matrix 2x2
+    /// Returns the transpose of a given matrix 2x2
     #[inline(always)]
+    #[must_use]
     pub fn transpose(&self) -> Mat2 {
         Mat2 {
             m00: self.m00,
@@ -312,8 +344,9 @@ impl Mat2 {
         }
     }
 
-    // Multiplies a vector by a matrix 2x2
+    /// Multiplies a vector by a matrix 2x2
     #[inline(always)]
+    #[must_use]
     pub fn multiply_vector2(&self, vector: Vector2) -> Vector2 {
         Vector2 {
             x: self.m00*vector.x + self.m01*vector.y,
@@ -322,22 +355,299 @@ impl Mat2 {
     }
 }
 
+/// The positions
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct PolygonData<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> {
     /// Current used vertex and normals count
-    pub vertex_count: usize,
+    vertex_count: usize,
     /// Polygon vertex positions vectors
-    pub positions: [Vector2; MAX_VERTICES],
+    positions: [Vector2; MAX_VERTICES],
     /// Polygon vertex normals vectors
-    pub normals: [Vector2; MAX_VERTICES],
+    normals: [Vector2; MAX_VERTICES],
 }
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PolygonData<MAX_VERTICES, CIRCLE_VERTICES> {
+    /// Construct a new [`PolygonData`] with no vertices.
     pub const fn new() -> Self {
         Self {
             vertex_count: 0,
             positions: [const { Vector2::zero() }; MAX_VERTICES],
             normals: [const { Vector2::zero() }; MAX_VERTICES],
         }
+    }
+
+    /// Construct a new [`PolygonData`] from positions and normals
+    ///
+    /// Positions are required to have a known count, but normals don't have to--as long as they don't have a known count different from the number of positions
+    ///
+    /// Returns [`None`] if there are a different number of normals from the number of positions, or if the number of positions exceeds `MAX_VERTICES`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use physac::prelude::*;
+    /// let polygon = PolygonData::<24, 24>::from([
+    ///     Vector2 { x: 1.0, y: 2.0 },
+    ///     Vector2 { x: 3.0, y: 4.0 },
+    ///     Vector2 { x: 5.0, y: 6.0 },
+    /// ], [
+    ///     Vector2 { x: -1.0, y: -2.0 },
+    ///     Vector2 { x: -3.0, y: -4.0 },
+    ///     Vector2 { x: -5.0, y: -6.0 },
+    /// ]).unwrap();
+    ///
+    /// assert_eq!(polygon.positions(), &[
+    ///     Vector2 { x: 1.0, y: 2.0 },
+    ///     Vector2 { x: 3.0, y: 4.0 },
+    ///     Vector2 { x: 5.0, y: 6.0 },
+    /// ]);
+    /// assert_eq!(polygon.normals(), &[
+    ///     Vector2 { x: -1.0, y: -2.0 },
+    ///     Vector2 { x: -3.0, y: -4.0 },
+    ///     Vector2 { x: -5.0, y: -6.0 },
+    /// ]);
+    /// ```
+    ///
+    /// ```
+    /// # use physac::prelude::*;
+    /// let polygon = PolygonData::<24, 24>::from([
+    ///     Vector2 { x: 1.0, y: 2.0 },
+    ///     Vector2 { x: 3.0, y: 4.0 },
+    ///     Vector2 { x: 5.0, y: 6.0 },
+    /// ], std::iter::repeat(Vector2 { x: 1.0, y: 0.0 })).unwrap();
+    ///
+    /// assert_eq!(polygon.positions(), &[
+    ///     Vector2 { x: 1.0, y: 2.0 },
+    ///     Vector2 { x: 3.0, y: 4.0 },
+    ///     Vector2 { x: 5.0, y: 6.0 },
+    /// ]);
+    /// assert_eq!(polygon.normals(), &[
+    ///     Vector2 { x: 1.0, y: 0.0 },
+    ///     Vector2 { x: 1.0, y: 0.0 },
+    ///     Vector2 { x: 1.0, y: 0.0 },
+    /// ]);
+    /// ```
+    #[must_use]
+    pub fn from<I1, I2>(positions: I1, normals: I2) -> Option<Self>
+    where
+        I1: IntoIterator<Item: Into<Vector2>, IntoIter: ExactSizeIterator>,
+        I2: IntoIterator<Item: Into<Vector2>>,
+    {
+        let positions_iter = positions.into_iter();
+        let normals_iter = normals.into_iter();
+        let vertex_count = positions_iter.len();
+        ((vertex_count <= MAX_VERTICES) && normals_iter.size_hint().1.is_none_or(|count| count == vertex_count))
+            .then(|| {
+                let mut positions = [const { Vector2::zero() }; MAX_VERTICES];
+                let mut normals = [const { Vector2::zero() }; MAX_VERTICES];
+                for (i, position) in positions_iter.enumerate() {
+                    positions[i] = position.into();
+                }
+                for (i, normal) in normals_iter.take(vertex_count).enumerate() {
+                    normals[i] = normal.into();
+                }
+                Self {
+                    vertex_count,
+                    positions,
+                    normals,
+                }
+            })
+    }
+
+    /// Append a vertex to the polygon
+    ///
+    /// Returns [`None`] if the polygon is already at max capacity
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use physac::prelude::*;
+    /// let mut polygon = PolygonData::<24, 24>::new();
+    ///
+    /// polygon.push(Vector2 { x: 5.0, y:  7.0 }, Vector2 { x:  4.0, y:  8.0 });
+    /// polygon.push(Vector2 { x: 8.0, y: -3.0 }, Vector2 { x: -7.0, y:  5.0 });
+    /// polygon.push(Vector2 { x: 9.0, y: 65.0 }, Vector2 { x:  1.0, y: -2.0 });
+    ///
+    /// assert_eq!(polygon.positions(), &[
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 8.0, y: -3.0 },
+    ///     Vector2 { x: 9.0, y: 65.0 },
+    /// ]);
+    /// assert_eq!(polygon.normals(), &[
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x: -7.0, y:  5.0 },
+    ///     Vector2 { x:  1.0, y: -2.0 },
+    /// ]);
+    /// ```
+    #[must_use]
+    pub fn push(&mut self, position: Vector2, normal: Vector2) -> Option<()> {
+        if self.vertex_count < MAX_VERTICES {
+            self.positions[self.vertex_count] = position;
+            self.normals[self.vertex_count] = normal;
+            self.vertex_count += 1;
+            Some(())
+        } else { None }
+    }
+
+    /// Remove the last vertex from the polygon and return it (position, normal)
+    ///
+    /// Returns [`None`] if the polygon is already empty
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use physac::prelude::*;
+    /// let mut polygon = PolygonData::<24, 24>::from([
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 8.0, y: -3.0 },
+    ///     Vector2 { x: 9.0, y: 65.0 },
+    /// ], [
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x: -7.0, y:  5.0 },
+    ///     Vector2 { x:  1.0, y: -2.0 },
+    /// ]).unwrap();
+    ///
+    /// polygon.pop();
+    ///
+    /// assert_eq!(polygon.positions(), &[
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 8.0, y: -3.0 },
+    /// ]);
+    /// assert_eq!(polygon.normals(), &[
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x: -7.0, y:  5.0 },
+    /// ]);
+    /// ```
+    pub fn pop(&mut self) -> Option<(Vector2, Vector2)> {
+        if let Some(new_vertex_count) = self.vertex_count.checked_sub(1) {
+            self.vertex_count = new_vertex_count;
+            Some((self.positions[new_vertex_count], self.normals[new_vertex_count]))
+        } else { None }
+    }
+
+    /// Insert a vertex into the polygon at the specified index
+    ///
+    /// Returns [`None`] if the polygon is already at max capacity or the index is out of bounds
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use physac::prelude::*;
+    /// let mut polygon = PolygonData::<24, 24>::from([
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 8.0, y: -3.0 },
+    ///     Vector2 { x: 9.0, y: 65.0 },
+    /// ], [
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x: -7.0, y:  5.0 },
+    ///     Vector2 { x:  1.0, y: -2.0 },
+    /// ]).unwrap();
+    ///
+    /// polygon.insert(2, Vector2 { x: 8.0, y: 8.0 }, Vector2 { x: 2.0, y: 2.0 });
+    ///
+    /// assert_eq!(polygon.positions(), &[
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 8.0, y: -3.0 },
+    ///     Vector2 { x: 8.0, y:  8.0 },
+    ///     Vector2 { x: 9.0, y: 65.0 },
+    /// ]);
+    /// assert_eq!(polygon.normals(), &[
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x: -7.0, y:  5.0 },
+    ///     Vector2 { x:  2.0, y:  2.0 },
+    ///     Vector2 { x:  1.0, y: -2.0 },
+    /// ]);
+    /// ```
+    #[must_use]
+    pub fn insert(&mut self, index: usize, position: Vector2, normal: Vector2) -> Option<()> {
+        if self.vertex_count < MAX_VERTICES {
+            if index < self.vertex_count {
+                self.positions.copy_within(index..self.vertex_count, index + 1);
+                self.normals  .copy_within(index..self.vertex_count, index + 1);
+                self.positions[index] = position;
+                self.normals  [index] = normal;
+                self.vertex_count += 1;
+                Some(())
+            } else {
+                self.push(position, normal)
+            }
+        } else { None }
+    }
+
+    /// Remove the vertex at the specified index from the polygon and return it (position, normal)
+    ///
+    /// Returns [`None`] if the polygon is already empty or the index is out of bounds
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use physac::prelude::*;
+    /// let mut polygon = PolygonData::<24, 24>::from([
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 8.0, y: -3.0 },
+    ///     Vector2 { x: 9.0, y: 65.0 },
+    /// ], [
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x: -7.0, y:  5.0 },
+    ///     Vector2 { x:  1.0, y: -2.0 },
+    /// ]).unwrap();
+    ///
+    /// let removed = polygon.remove(1);
+    /// assert_eq!(removed, Some((Vector2 { x: 8.0, y: -3.0 }, Vector2 { x: -7.0, y:  5.0 })));
+    ///
+    /// assert_eq!(polygon.positions(), &[
+    ///     Vector2 { x: 5.0, y:  7.0 },
+    ///     Vector2 { x: 9.0, y: 65.0 },
+    /// ]);
+    /// assert_eq!(polygon.normals(), &[
+    ///     Vector2 { x:  4.0, y:  8.0 },
+    ///     Vector2 { x:  1.0, y: -2.0 },
+    /// ]);
+    /// ```
+    pub fn remove(&mut self, index: usize) -> Option<(Vector2, Vector2)> {
+        if index < self.vertex_count {
+            self.vertex_count -= 1; // `vertex_count` can't be zero if `index` is unsigned and less than it
+            let result = (self.positions[index], self.normals[index]);
+            self.positions.copy_within((index + 1).., index);
+            self.normals  .copy_within((index + 1).., index);
+            Some(result)
+        } else { None }
+    }
+
+    /// Current used vertex and normals count
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.vertex_count
+    }
+
+    /// Test if the polygon has no vertices
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.vertex_count == 0
+    }
+
+    /// Get the vertex positions as a slice
+    #[must_use]
+    pub fn positions(&self) -> &[Vector2] {
+        &self.positions[..self.vertex_count]
+    }
+
+    /// Get the vertex positions as a mutable slice
+    #[must_use]
+    pub fn positions_mut(&mut self) -> &mut [Vector2] {
+        &mut self.positions[..self.vertex_count]
+    }
+
+    /// Get the vertex normals as a slice
+    #[must_use]
+    pub fn normals(&self) -> &[Vector2] {
+        &self.normals[..self.vertex_count]
+    }
+
+    /// Get the vertex normals as a mutable slice
+    #[must_use]
+    pub fn normals_mut(&mut self) -> &mut [Vector2] {
+        &mut self.normals[..self.vertex_count]
     }
 }
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Default for PolygonData<MAX_VERTICES, CIRCLE_VERTICES> {
@@ -346,12 +656,18 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Default for Polygo
     }
 }
 
+/// The shape of a physics body; either a Circle or a Polygon
 #[derive(Debug, Clone, Copy)]
 pub enum PhysicsShape<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> {
+    /// A circle - simulated as an impossibly smooth and round circle,
+    /// approximated with `CIRCLE_VERTICES` when calling [`PhysicsBodyData::get_physics_shape_vertex()`]
+    ///
+    /// Rotation is meaningless
     Circle {
         /// Circle shape radius
         radius: f32,
     },
+    /// A polygon - uses `MAX_VERTICES`
     Polygon {
         /// Polygon shape vertices position and normals data (just used for polygon shapes)
         vertex_data: PolygonData<MAX_VERTICES, CIRCLE_VERTICES>,
@@ -361,6 +677,8 @@ pub enum PhysicsShape<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> {
 }
 pub use PhysicsShape::{Circle as PHYSICS_CIRCLE, Polygon as PHYSICS_POLYGON};
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsShape<MAX_VERTICES, CIRCLE_VERTICES> {
+    /// Construct a circle with 0 radius
+    #[must_use]
     pub const fn new() -> Self {
         PHYSICS_CIRCLE { radius: 0.0 }
     }
@@ -371,7 +689,16 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Default for Physic
     }
 }
 
+/// A physics body
+///
+/// Create using [`Physac::create_physics_body_circle`], [`Physac::create_physics_body_rectangle`], or [`Physac::create_physics_body_polygon`]
+///
+/// Destroy (remove from the simulation) using [`Physac::destroy_physics_body`] or [`Physac::destroy_physics_bodies`]
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "these are flags, not states",
+)]
 pub struct PhysicsBodyData<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> {
     /// Reference unique identifier
     pub id: u32,
@@ -415,6 +742,7 @@ pub struct PhysicsBodyData<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usi
     is_simulating: bool,
 }
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES> {
+    /// Construct a new physics body with default values
     const fn new() -> Self {
         Self {
             id: 0,
@@ -446,6 +774,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Default for Physic
     }
 }
 
+/// A physics collision
 #[derive(Debug, Clone)]
 struct PhysicsManifoldData<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> {
     /// Reference unique identifier
@@ -486,29 +815,65 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsManifoldDat
     }
 }
 
+/// A helper module for thread safety
 pub mod phys_rc {
-    use super::*;
-
     #[cfg(feature = "sync")]
-    pub type PhysacHandleReadGuard<'a, T> = RwLockReadGuard<'a, T>;
-    #[cfg(not(feature = "sync"))]
-    pub type PhysacHandleReadGuard<'a, T> = &'a T;
+    use std::sync::{self, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-    #[cfg(feature = "sync")]
-    pub type PhysacHandleWriteGuard<'a, T> = RwLockWriteGuard<'a, T>;
     #[cfg(not(feature = "sync"))]
-    pub type PhysacHandleWriteGuard<'a, T> = &'a mut T;
+    use std::{rc::{self, Rc}, cell::{RefCell, Ref, RefMut}};
 
-    #[cfg(feature = "sync")]
-    pub type PhysacReadGuard<'a, T> = RwLockReadGuard<'a, T>;
-    #[cfg(not(feature = "sync"))]
-    pub type PhysacReadGuard<'a, T> = Ref<'a, T>;
+    #[cfg(    feature = "sync" )] type PhysacHandleReadGuardImpl<'a, T> = RwLockReadGuard<'a, T>;
+    #[cfg(not(feature = "sync"))] type PhysacHandleReadGuardImpl<'a, T> = &'a T;
 
-    #[cfg(feature = "sync")]
-    pub type PhysacWriteGuard<'a, T> = RwLockWriteGuard<'a, T>;
-    #[cfg(not(feature = "sync"))]
-    pub type PhysacWriteGuard<'a, T> = RefMut<'a, T>;
+    #[cfg(    feature = "sync" )] type PhysacHandleWriteGuardImpl<'a, T> = RwLockWriteGuard<'a, T>;
+    #[cfg(not(feature = "sync"))] type PhysacHandleWriteGuardImpl<'a, T> = &'a mut T;
 
+    #[cfg(    feature = "sync" )] type PhysacReadGuardImpl<'a, T> = RwLockReadGuard<'a, T>;
+    #[cfg(not(feature = "sync"))] type PhysacReadGuardImpl<'a, T> = Ref<'a, T>;
+
+    #[cfg(    feature = "sync" )] type PhysacWriteGuardImpl<'a, T> = RwLockWriteGuard<'a, T>;
+    #[cfg(not(feature = "sync"))] type PhysacWriteGuardImpl<'a, T> = RefMut<'a, T>;
+
+    /// RAII structure used to release the shared read access of a lock when dropped, implemented as a
+    #[cfg_attr(    feature = "sync",  doc = "[`std::sync::RwLockReadGuard<'a, T>`]")]
+    #[cfg_attr(not(feature = "sync"), doc = "`&T`")]
+    ///
+    /// This structure is created by the [`crate::PhysacHandle::borrow`] method
+    pub type PhysacHandleReadGuard<'a, T> = PhysacHandleReadGuardImpl<'a, T>;
+
+    /// RAII structure used to release the shared write access of a lock when dropped, implemented as a
+    #[cfg_attr(    feature = "sync",  doc = "[`std::sync::RwLockWriteGuard<'a, T>`]")]
+    #[cfg_attr(not(feature = "sync"), doc = "`&mut T`")]
+    ///
+    /// This structure is created by the [`crate::PhysacHandle::borrow_mut`] method
+    pub type PhysacHandleWriteGuard<'a, T> = PhysacHandleWriteGuardImpl<'a, T>;
+
+    /// RAII structure used to release the shared read access of a lock when dropped, implemented as a
+    #[cfg_attr(    feature = "sync",  doc = "[`std::sync::RwLockReadGuard<'a, T>`]")]
+    #[cfg_attr(not(feature = "sync"), doc = "`std::cell::Ref<'a, T>`")]
+    ///
+    /// This structure is created by the [`Strong::borrow`] method
+    pub type PhysacReadGuard<'a, T> = PhysacReadGuardImpl<'a, T>;
+
+    /// RAII structure used to release the shared read access of a lock when dropped, implemented as a
+    #[cfg_attr(    feature = "sync",  doc = "[`std::sync::RwLockWriteGuard<'a, T>`]")]
+    #[cfg_attr(not(feature = "sync"), doc = "`std::cell::RefMut<'a, T>`")]
+    ///
+    /// This structure is created by the [`Strong::borrow_mut`] method
+    pub type PhysacWriteGuard<'a, T> = PhysacWriteGuardImpl<'a, T>;
+
+    /// A
+    #[cfg_attr(    feature = "sync",  doc = "thread-safe")]
+    #[cfg_attr(not(feature = "sync"), doc = "single-threaded")]
+    /// reference-counting pointer to a
+    #[cfg_attr(    feature = "sync",  doc = "reader-writer lock")]
+    #[cfg_attr(not(feature = "sync"), doc = "mutable memory location with dynamically checked borrow rules")]
+    ///
+    /// See
+    #[cfg_attr(    feature = "sync",  doc = "[`Arc`] and [`RwLock`]")]
+    #[cfg_attr(not(feature = "sync"), doc = "[`Rc`] and [`RefCell`]")]
+    /// for a more information
     #[derive(Debug)]
     pub struct Strong<T> {
         #[cfg(feature = "sync")]
@@ -522,6 +887,7 @@ pub mod phys_rc {
         }
     }
     impl<T> Strong<T> {
+        #[must_use]
         pub(super) fn new(data: T) -> Self {
             Self {
                 #[cfg(feature = "sync")]
@@ -532,6 +898,7 @@ pub mod phys_rc {
         }
 
         /// Get a weak reference from a strong one
+        #[must_use]
         pub fn downgrade(&self) -> Weak<T> {
             let inner = &self.inner;
             Weak {
@@ -543,6 +910,7 @@ pub mod phys_rc {
         }
 
         /// Try to get a temporary reference to the body, returning an error if the resource is poisoned
+        #[cfg_attr(feature = "sync", doc = "\n # Errors\n\n This function will return an error if the RwLock is poisoned. An RwLock is poisoned whenever a writer panics while holding an exclusive lock. The failure will occur immediately after the lock has been acquired. The acquired lock guard will be contained in the returned error.")]
         #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         pub fn read(&self) -> std::sync::LockResult<PhysacReadGuard<'_, T>> {
             #[cfg(feature = "sync")] {
@@ -553,6 +921,7 @@ pub mod phys_rc {
         }
 
         /// Try to get a temporary mutable reference to the body, returning an error if the resource is poisoned
+        #[cfg_attr(feature = "sync", doc = "\n # Errors\n\n This function will return an error if the RwLock is poisoned. An RwLock is poisoned whenever a writer panics while holding an exclusive lock. An error will be returned when the lock is acquired. The acquired lock guard will be contained in the returned error.")]
         #[cfg_attr(feature = "sync", doc = "\n # Deadlocks\n\n The physics thread needs to borrow every body at some point during a tick, so try not store the borrow for longer than you have to (do not store the guard in a struct or at a scope outside of the main loop)")]
         pub fn write(&self) -> std::sync::LockResult<PhysacWriteGuard<'_, T>> {
             #[cfg(feature = "sync")] {
@@ -613,6 +982,12 @@ pub mod phys_rc {
         }
     }
 
+    /// A non-owning reference to the managed allocation
+    ///
+    /// See
+    #[cfg_attr(    feature = "sync",  doc = "[`sync::Weak`] and [`RwLock`]")]
+    #[cfg_attr(not(feature = "sync"), doc = "[`rc::Weak`] and [`RefCell`]")]
+    /// for a more information
     #[derive(Debug, Clone)]
     pub struct Weak<T> {
         #[cfg(feature = "sync")]
@@ -626,7 +1001,8 @@ pub mod phys_rc {
         }
     }
     impl<T> Weak<T> {
-        /// Constructs a weak body with no reference
+        /// Constructs a weak reference to nothing
+        #[must_use]
         pub fn new() -> Self {
             Self {
                 #[cfg(feature = "sync")]
@@ -636,6 +1012,7 @@ pub mod phys_rc {
             }
         }
 
+        #[must_use]
         pub(super) fn strong_count(&self) -> usize {
             #[cfg(feature = "sync")]
             let n = sync::Weak::strong_count(&self.inner);
@@ -647,6 +1024,7 @@ pub mod phys_rc {
         /// Try to get a strong reference from a weak one
         ///
         /// Returns [`None`] if no Strong references exist for the object
+        #[must_use]
         pub fn upgrade(&self) -> Option<Strong<T>> {
             self.inner.upgrade().map(|inner| Strong { inner })
         }
@@ -674,10 +1052,13 @@ pub mod phys_rc {
         }
     }
 
+    use super::PhysicsBodyData;
+
     impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Weak<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
         /// Try to get a strong reference from a weak one
         ///
         /// Returns [`None`] if no Strong references exist for the body, or if the body has been destroyed
+        #[must_use]
         pub fn sim_upgrade(&self) -> Option<Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
             self.inner.upgrade()
                 .filter(|body| body.read().is_ok_and(|body| body.is_simulating()))
@@ -696,17 +1077,21 @@ pub use self::phys_rc::*;
 //----------------------------------------------------------------------------------
 // Defines and Macros
 //----------------------------------------------------------------------------------
-pub const PHYSAC_K: f32 = 1.0/3.0;
+const PHYSAC_K: f32 = 1.0/3.0;
 
 //----------------------------------------------------------------------------------
 // Global Variables Definition
 //----------------------------------------------------------------------------------
+/// A collection of variables related to simulating physics
 pub struct Physac<const MAX_VERTICES: usize = 24, const CIRCLE_VERTICES: usize = MAX_VERTICES> {
     #[cfg(feature = "phys_thread")]
     fixed_time: f64,
-    collision_iterations: usize,
-    penetration_allowance: f32,
-    penetration_correction: f32,
+    /// How many times the simulation will iteratively solve each collision every step
+    pub collision_iterations: usize,
+    /// How deep two physics bodies are allowed to overlap
+    pub penetration_allowance: f32,
+    /// How much the engine is allowed to correct physics body positions at a time to push them apart when overlapping
+    pub penetration_correction: f32,
 
     #[cfg(feature = "phys_thread")]
     /// Physics thread
@@ -744,6 +1129,30 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Drop for Physac<MA
     }
 }
 
+/// A handle that allows [`Physac`] to be
+#[cfg_attr(    feature = "sync",  doc = "borrowed, locking it so that the current thread isn't racing the physics thread, and")]
+#[cfg_attr(not(feature = "sync"), doc = "accessed,")]
+/// closing physics upon exiting scope or being dropped
+///
+/// Created with [`PhysacBuilder::build`]
+///
+/// # Examples
+///
+/// ```
+/// # use physac::prelude::*;
+/// let mut ph: PhysacHandle<_> = init_physics::<24, 24>().build();
+///
+/// ph.borrowed_mut(|ph| {
+///     ph.create_physics_body_circle(Vector2 { x: 0.0, y: 0.0 }, 45.0, 10.0);
+/// });
+/// assert_eq!(ph.borrow().get_physics_bodies_count(), 1);
+///
+/// ph.borrowed_mut(|ph| {
+///     let body = ph.get_physics_body(0).clone();
+///     ph.destroy_physics_body(body);
+/// });
+/// assert_eq!(ph.borrow().get_physics_bodies_count(), 0);
+/// ```
 pub struct PhysacHandle<T> {
     #[cfg(feature = "sync")]
     phys: Arc<RwLock<T>>,
@@ -791,6 +1200,10 @@ impl<T> std::ops::DerefMut for PhysacHandle<T> {
 //----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
+/// A helper for initializing [`Physac`] with custom parameters
+///
+/// Created with [`init_physics()`]
+#[must_use]
 pub struct PhysacBuilder<const MAX_VERTICES: usize = 24, const CIRCLE_VERTICES: usize = MAX_VERTICES> {
     circle_vertices: usize,
     fixed_time: f64,
@@ -819,43 +1232,56 @@ pub fn init_physics<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>() -
 }
 
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysacBuilder<MAX_VERTICES, CIRCLE_VERTICES> {
+    /// Set the number of vertices used to approximate [`PhysicsShape::Circle`]s with [`PhysicsBodyData::get_physics_shape_vertex`]
     pub fn circle_vertices(&mut self, n: NonZeroUsize) -> &mut Self {
         self.circle_vertices = n.get();
         self
     }
+    /// Set the fixed time
     pub fn fixed_time(&mut self, value: f64) -> &mut Self {
         self.fixed_time = value;
         self
     }
+    /// Set the number of collision iterations
     pub fn collision_iterations(&mut self, n: usize) -> &mut Self {
         self.collision_iterations = n;
         self
     }
+    /// Set the penetration allowance amount
     pub fn penetration_allowance(&mut self, amount: f32) -> &mut Self {
         self.penetration_allowance = amount;
         self
     }
+    /// Set the penetration correction amount
     pub fn penetration_correction(&mut self, amount: f32) -> &mut Self {
         self.penetration_correction = amount;
         self
     }
+    /// Set the direction and strength of gravity in units per second per second
     pub fn gravity_force(&mut self, x: f32, y: f32) -> &mut Self {
         self.gravity_force.x = x;
         self.gravity_force.y = y;
         self
     }
+    /// Set the direction and strength of gravity in units per second per second with a [`Vector2`]
     pub fn gravity_force_v(&mut self, v: Vector2) -> &mut Self {
         self.gravity_force = v;
         self
     }
+    /// Set the horizontal strength of gravity in units per second per second
     pub fn gravity_force_x(&mut self, x: f32) -> &mut Self {
         self.gravity_force.x = x;
         self
     }
+    /// Set the vertical strength of gravity in units per second per second
     pub fn gravity_force_y(&mut self, y: f32) -> &mut Self {
         self.gravity_force.y = y;
         self
     }
+    /// Set the initial capacity for physics bodies
+    ///
+    /// Automatically sets `max_manifolds` to `n`<sup>2</sup>,
+    /// if it hasn't been set with [`Self::max_manifolds`] yet
     pub fn max_bodies(&mut self, n: usize) -> &mut Self {
         self.max_bodies = n;
         if !self.is_max_manifolds_overridden {
@@ -863,11 +1289,13 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysacBuilder<MAX_
         }
         self
     }
+    /// Set the initial capacity for physics body collisions each step
     pub fn max_manifolds(&mut self, n: usize) -> &mut Self {
         self.max_manifolds = n;
         self.is_max_manifolds_overridden = true;
         self
     }
+    /// Construct [`Physac`] with the chosen configuration and put it inside a [`PhysacHandle`]
     pub fn build(&mut self) -> PhysacHandle<Physac<MAX_VERTICES, CIRCLE_VERTICES>> {
         let mut phys = Physac {
             #[cfg(feature = "phys_thread")]
@@ -911,6 +1339,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysacBuilder<MAX_
 impl<T> PhysacHandle<T> {
     #[cfg(feature = "phys_thread")]
     /// Returns true if physics thread is currently enabled
+    #[must_use]
     pub fn is_physics_enabled(&self) -> bool {
         self.is_physics_thread_enabled.load(Relaxed)
     }
@@ -965,6 +1394,57 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
         self.gravity_force.y = y;
     }
 
+    /// Creates a new physics body with the provided shape and generic parameters
+    ///
+    /// Returns [`None`] if there are no available IDs
+    pub fn try_create_physics_body(&mut self, pos: Vector2, shape: PhysicsShape<MAX_VERTICES, CIRCLE_VERTICES>, inertia: f32, mass: f32) -> Option<&Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
+        if let Some(new_id) = self.find_available_body_index() {
+            // Initialize new body with generic values
+            let new_body = PhysicsBodyData {
+                id: new_id,
+                enabled: true,
+                position: pos,
+                velocity: Vector2::zero(),
+                force: Vector2::zero(),
+                angular_velocity: 0.0,
+                torque: 0.0,
+                orient: 0.0,
+                inertia,
+                inverse_inertia: if inertia != 0.0 { 1.0/inertia } else { 0.0 },
+                shape,
+                mass,
+                inverse_mass: if mass != 0.0 { 1.0/mass } else { 0.0 },
+                static_friction: 0.4,
+                dynamic_friction: 0.2,
+                restitution: 0.0,
+                use_gravity: true,
+                is_grounded: false,
+                freeze_orient: false,
+                is_simulating: true,
+            };
+
+            // Add new body to bodies pointers array and update bodies count
+            self.bodies.push(Strong::new(new_body));
+
+            debug_print!("[PHYSAC] created physics body id {new_id}");
+            let [.., result] = &self.bodies[..] else { unreachable!("should have at least one element after pushing") };
+            Some(result)
+        } else {
+            debug_print!("[PHYSAC] new physics body creation failed because there isn't any available id to use");
+            None
+        }
+    }
+
+    /// Creates a new physics body with the provided shape and generic parameters
+    ///
+    /// # Panics
+    ///
+    /// This method may panic if there are no available IDs
+    #[inline]
+    pub fn create_physics_body(&mut self, pos: Vector2, shape: PhysicsShape<MAX_VERTICES, CIRCLE_VERTICES>, inertia: f32, mass: f32) -> &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
+        self.try_create_physics_body(pos, shape, inertia, mass).unwrap()
+    }
+
     /// Creates a new circle physics body with generic parameters
     ///
     /// Returns [`None`] if there are no available IDs
@@ -982,13 +1462,14 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
                 orient: 0.0,
                 shape: PHYSICS_CIRCLE { radius },
 
-                mass: (PI*radius as f64*radius as f64*density as f64) as f32,
+                mass: (PI*f64::from(radius)*f64::from(radius)*f64::from(density)) as f32,
                 static_friction: 0.4,
                 dynamic_friction: 0.2,
                 restitution: 0.0,
                 use_gravity: true,
                 is_grounded: false,
                 freeze_orient: false,
+                is_simulating: true,
                 ..Default::default()
             };
             new_body.inverse_mass = if new_body.mass != 0.0 { 1.0/new_body.mass } else { 0.0 };
@@ -999,9 +1480,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             self.bodies.push(Strong::new(new_body));
 
             debug_print!("[PHYSAC] created polygon physics body id {new_id}");
-            Some(self.bodies.last().expect("should have at least one element after pushing"))
+            let [.., result] = &self.bodies[..] else { unreachable!("should have at least one element after pushing") };
+            Some(result)
         } else {
-            debug_print!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            debug_print!("[PHYSAC] new physics body creation failed because there isn't any available id to use");
             None
         }
     }
@@ -1080,6 +1562,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
                 use_gravity: true,
                 is_grounded: false,
                 freeze_orient: false,
+                is_simulating: true,
                 ..Default::default()
             };
             new_body.inverse_mass = if new_body.mass != 0.0 { 1.0/new_body.mass } else { 0.0 };
@@ -1090,9 +1573,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             self.bodies.push(Strong::new(new_body));
 
             debug_print!("[PHYSAC] created polygon physics body id {new_id}");
-            Some(self.bodies.last().expect("should have at least one element after pushing"))
+            let [.., result] = &self.bodies[..] else { unreachable!("should have at least one element after pushing") };
+            Some(result)
         } else {
-            debug_print!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            debug_print!("[PHYSAC] new physics body creation failed because there isn't any available id to use");
             None
         }
     }
@@ -1170,6 +1654,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
                 use_gravity: true,
                 is_grounded: false,
                 freeze_orient: false,
+                is_simulating: true,
                 ..Default::default()
             };
             new_body.inverse_mass = if new_body.mass != 0.0 { 1.0/new_body.mass } else { 0.0 };
@@ -1180,9 +1665,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             self.bodies.push(Strong::new(new_body));
 
             debug_print!("[PHYSAC] created polygon physics body id {new_id}");
-            Some(self.bodies.last().expect("should have at least one element after pushing"))
+            let [.., result] = &self.bodies[..] else { unreachable!("should have at least one element after pushing") };
+            Some(result)
         } else {
-            debug_print!("[PHYSAC] new physics body creation failed because there is any available id to use");
+            debug_print!("[PHYSAC] new physics body creation failed because there isn't any available id to use");
             None
         }
     }
@@ -1202,6 +1688,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     /// # Panics
     ///
     /// This method may panic if there are not enough available IDs to create fragments
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "this is basically another destroy method",
+    )]
     pub fn physics_shatter(&mut self, body: Weak<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>, position: Vector2, force: f32) {
         if let Some(phys_body) = body.upgrade() {
             let body = phys_body.borrow_mut();
@@ -1339,6 +1829,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     }
 
     /// Returns the current amount of created physics bodies
+    #[must_use]
     pub fn get_physics_bodies_count(&self) -> usize {
         self.bodies.len()
     }
@@ -1346,6 +1837,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     /// Returns a physics body of the bodies pool at a specific index
     ///
     /// Returns [`None`] if `index` is out of bounds
+    #[must_use]
     pub fn try_get_physics_body(&self, index: usize) -> Option<&Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> {
         if index >= self.bodies.len() {
             debug_print!("[PHYSAC] physics body index is out of bounds");
@@ -1359,6 +1851,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     /// # Panics
     ///
     /// This method may panic if `index` is out of bounds
+    #[must_use]
     pub fn get_physics_body(&self, index: usize) -> &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>> {
         self.try_get_physics_body(index).unwrap()
     }
@@ -1381,25 +1874,36 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
         self.get_physics_body(index).borrow_mut()
     }
 
+    /// Returns an iterator over borrows of each physics body in the simulation
+    #[must_use]
     pub fn physics_body_iter(&self) -> impl DoubleEndedIterator<Item = PhysacReadGuard<'_, PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> + ExactSizeIterator {
         self.bodies.iter().map(|body| body.borrow())
     }
 
+    /// Returns an iterator over mutable borrows of each physics body in the simulation
+    #[must_use]
     pub fn physics_body_iter_mut(&self) -> impl DoubleEndedIterator<Item = PhysacWriteGuard<'_, PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> + ExactSizeIterator {
         self.bodies.iter().map(|body| body.borrow_mut())
     }
 
+    /// Returns an iterator over [`Strong`] references to each physics body in the simulation
+    #[must_use]
     pub fn strong_physics_body_iter(&self) -> impl DoubleEndedIterator<Item = &Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>> + ExactSizeIterator {
         self.bodies.iter()
     }
 
     /// Unitializes and destroys a physics body
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the user will presumably pass in an upgrade they made specifically for this, and it indicates the end of that instance's life.",
+    )]
     pub fn destroy_physics_body(&mut self, body: Strong<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>) {
         let id = body.borrow().id;
 
         let index = self.bodies.iter().position(|body| body.borrow().id == id);
 
         if let Some(index) = index {
+            body.borrow_mut().is_simulating = false;
             #[cfg(debug_assertions)]
             let weak = body.downgrade();
             // Free body allocated memory
@@ -1410,7 +1914,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             #[cfg(debug_assertions)] {
                 let strong_count = weak.strong_count();
                 if strong_count > 0 {
-                    debug_print!("[PHYSAC] WARNING: physics body id {id} is destroyed, but still has {strong_count} strong references");
+                    debug_print!("[PHYSAC] physics body id {id} is destroyed, but still has {strong_count} strong references");
                 }
             }
         } else {
@@ -1419,6 +1923,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
     }
 
     /// Unitializes and destroys a physics body
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the user will presumably pass in a downgrade they made specifically for this, and it indicates the end of that instance's life.",
+    )]
     pub fn try_destroy_physics_body(&mut self, body: Weak<PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES>>) {
         if let Some(body) = body.upgrade() {
             self.destroy_physics_body(body);
@@ -1455,6 +1963,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
 
 impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MAX_VERTICES, CIRCLE_VERTICES> {
     /// Returns true if the body is still being simulated, returns false if it has been destroyed
+    #[must_use]
     pub fn is_simulating(&self) -> bool {
         self.is_simulating
     }
@@ -1479,6 +1988,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MA
     }
 
     /// Returns the number of vertices of a physics body shape
+    #[must_use]
     pub fn get_physics_shape_vertices_count(&self) -> usize {
         match self.shape {
             PHYSICS_CIRCLE { .. } => CIRCLE_VERTICES,
@@ -1489,6 +1999,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MA
     /// Returns transformed position of a body shape (body position + vertex transformed position)
     ///
     /// Returns [`None`] if `vertex` index is out of bounds
+    #[must_use]
     pub fn try_get_physics_body_shape_vertex(&self, vertex: usize) -> Option<Vector2> {
         match self.shape {
             PHYSICS_CIRCLE { radius } => {
@@ -1513,23 +2024,27 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PhysicsBodyData<MA
     /// # Panics
     ///
     /// This method may panic if `vertex` index is out of bounds
+    #[must_use]
     pub fn get_physics_shape_vertex(&self, vertex: usize) -> Vector2 {
         self.try_get_physics_body_shape_vertex(vertex).unwrap()
     }
 
     /// Returns an iterator over the transformed positions of a body shape (body position + vertex transformed position)
+    #[must_use]
     pub fn vertices_iter(&self) -> impl DoubleEndedIterator<Item = Vector2> + ExactSizeIterator {
         (0..self.get_physics_shape_vertices_count())
             .map(|i| self.get_physics_shape_vertex(i))
     }
 
     /// Returns an iterator over the transformed positions of a body shape (body position + vertex transformed position), repeating the first vertex one more time after the final vertex
+    #[must_use]
     pub fn vertices_iter_closed(&self) -> impl DoubleEndedIterator<Item = Vector2> {
         self.vertices_iter()
             .chain(std::iter::once_with(|| self.get_physics_shape_vertex(0)))
     }
 
-    /// Returns the physics body shape type (PHYSICS_CIRCLE or PHYSICS_POLYGON)
+    /// Returns the physics body shape type ([`PHYSICS_CIRCLE`] or [`PHYSICS_POLYGON`])
+    #[must_use]
     pub fn get_physics_shape_type(&self) -> std::mem::Discriminant<PhysicsShape<MAX_VERTICES, CIRCLE_VERTICES>> {
         std::mem::discriminant(&self.shape)
     }
@@ -1590,12 +2105,18 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> PolygonData<MAX_VE
     }
 }
 
+/// An error that occurs during [`Physac::run_physics_step`]
 #[derive(Debug)]
 pub enum PhysicsStepError {
+    /// [`Physac`] is poisoned
     PhysacPoison,
+    /// A [`Strong<PhysicsBodyData>`] is poisoned
     PhysicsBodyPoison,
+    /// [`Physac`] is out of available IDs to satisfy the demand for physics bodies and manifolds
     OutOfIDs,
+    /// An index is out of bounds
     OutOfBounds,
+    /// A denominator is zero
     DivByZero,
 }
 impl std::fmt::Display for PhysicsStepError {
@@ -1623,6 +2144,10 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> From<std::sync::Po
 
 /// Physics loop thread function
 #[cfg(feature = "phys_thread")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "replacing these with references would cause those references to be dropped when the caller finishes, but we want this function to outlive that.",
+)]
 fn physics_loop<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>(phys: Arc<RwLock<Physac<MAX_VERTICES, CIRCLE_VERTICES>>>, is_physics_thread_enabled: Arc<AtomicBool>) {
     debug_print!("[PHYSAC] physics thread created successfully");
 
@@ -1631,7 +2156,7 @@ fn physics_loop<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize>(phys: A
 
     // Physics update loop
     while is_physics_thread_enabled.load(Relaxed) {
-        let fixed_time = match phys.write().map_err(|_| PhysicsStepError::PhysacPoison).and_then(|mut lock| lock.run_physics_step().map(|_| lock.fixed_time)) {
+        let fixed_time = match phys.write().map_err(|_| PhysicsStepError::PhysacPoison).and_then(|mut lock| lock.run_physics_step().map(|()| lock.fixed_time)) {
             Ok(fixed_time) => fixed_time,
             Err(e) => {
                 debug_print!("[PHYSAC] {e}; physics thread will now close");
@@ -1726,7 +2251,13 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
         Ok(())
     }
 
-    /// Wrapper to ensure PhysicsStep is run with at a fixed time step
+    /// Wrapper to ensure `physics_step` is run with at a fixed time step
+    ///
+    /// # Errors
+    ///
+    /// This method may return a [`PhysicsStepError`] if an error occurs at some point during the physics step.
+    ///
+    /// See [`PhysicsStepError`] for information about the specific errors that can occur.
     pub fn run_physics_step(&mut self) -> Result<(), PhysicsStepError> {
         // Calculate current time
         self.current_time = self.get_curr_time();
@@ -1749,6 +2280,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
         Ok(())
     }
 
+    /// Sets the time step of the physics simulation
     pub fn set_physics_time_step(&mut self, delta: f64) {
         self.delta_time = delta;
     }
@@ -1803,7 +2335,7 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             self.contacts.push(new_manifold);
             Some(&mut *self.contacts.last_mut().expect("should have at least one element after push"))
         } else {
-            debug_print!("[PHYSAC] new physics manifold creation failed because there is any available id to use");
+            debug_print!("[PHYSAC] new physics manifold creation failed because there isn't any available id to use");
             None
         }
     }
@@ -1814,16 +2346,16 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             return;
         }
 
-        body.velocity.x += ((body.force.x*body.inverse_mass) as f64*(delta_time/2.0)) as f32;
-        body.velocity.y += ((body.force.y*body.inverse_mass) as f64*(delta_time/2.0)) as f32;
+        body.velocity.x += (f64::from(body.force.x*body.inverse_mass)*(delta_time/2.0)) as f32;
+        body.velocity.y += (f64::from(body.force.y*body.inverse_mass)*(delta_time/2.0)) as f32;
 
         if body.use_gravity {
-            body.velocity.x += (gravity_force.x as f64*(delta_time/1000.0/2.0)) as f32;
-            body.velocity.y += (gravity_force.y as f64*(delta_time/1000.0/2.0)) as f32;
+            body.velocity.x += (f64::from(gravity_force.x)*(delta_time/1000.0/2.0)) as f32;
+            body.velocity.y += (f64::from(gravity_force.y)*(delta_time/1000.0/2.0)) as f32;
         }
 
         if !body.freeze_orient {
-            body.angular_velocity += (body.torque as f64*body.inverse_inertia as f64*(delta_time/2.0)) as f32;
+            body.angular_velocity += (f64::from(body.torque)*f64::from(body.inverse_inertia)*(delta_time/2.0)) as f32;
         }
     }
 
@@ -1979,11 +2511,11 @@ impl<const MAX_VERTICES: usize, const CIRCLE_VERTICES: usize> Physac<MAX_VERTICE
             return;
         }
 
-        body.position.x += (body.velocity.x as f64*delta_time) as f32;
-        body.position.y += (body.velocity.y as f64*delta_time) as f32;
+        body.position.x += (f64::from(body.velocity.x)*delta_time) as f32;
+        body.position.y += (f64::from(body.velocity.y)*delta_time) as f32;
 
         if !body.freeze_orient {
-            body.orient += (body.angular_velocity as f64*delta_time) as f32;
+            body.orient += (f64::from(body.angular_velocity)*delta_time) as f32;
         }
 
         let orient = body.orient;
@@ -2464,6 +2996,8 @@ fn math_cross_vector2(v1: Vector2, v2: Vector2) -> f32 {
 
 #[cfg(not(feature = "raylib"))]
 impl Vector2 {
+    /// A Vector2 with 0 in both x and y
+    #[must_use]
     pub const fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }
     }
@@ -2527,44 +3061,48 @@ impl std::ops::Mul<f32> for Vector2 {
 impl std::ops::AddAssign for Vector2 {
     #[inline(always)]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs
+        *self = *self + rhs;
     }
 }
 #[cfg(not(feature = "raylib"))]
 impl std::ops::SubAssign for Vector2 {
     #[inline(always)]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs
+        *self = *self - rhs;
     }
 }
 #[cfg(not(feature = "raylib"))]
 impl std::ops::MulAssign for Vector2 {
     #[inline(always)]
     fn mul_assign(&mut self, rhs: Self) {
-        *self = *self * rhs
+        *self = *self * rhs;
     }
 }
 #[cfg(not(feature = "raylib"))]
 impl std::ops::MulAssign<f32> for Vector2 {
     #[inline(always)]
     fn mul_assign(&mut self, rhs: f32) {
-        *self = *self * rhs
+        *self = *self * rhs;
     }
 }
 #[cfg(not(feature = "raylib"))]
 impl Vector2 {
+    /// Returns the dot product of the two vectors
     #[inline(always)]
+    #[must_use]
     pub const fn dot(self, other: Vector2) -> f32 {
         self.x*other.x + self.y*other.y
     }
 
+    /// Returns the square of the magnitude of a vector
     #[inline(always)]
+    #[must_use]
     pub const fn length_sqr(self) -> f32 {
         self.dot(self)
     }
 }
 
-// Returns the square root of distance between two vectors
+// Returns the square of distance between two vectors
 #[inline(always)]
 fn dist_sqr(v1: Vector2, v2: Vector2) -> f32 {
     let dir = v1 - v2;
