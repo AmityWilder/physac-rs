@@ -4,7 +4,7 @@
 
 # physac-rs
 
-physac-rs is a Rust-native translation of [Physac][] with built-in support for [raylib-rs][]. Raylib is not *required* however, and can be disabled by removing the `raylib` feature flag in your `Cargo.toml` file.
+physac-rs is a Rust-native translation of [Physac][] with built-in support for [raylib-rs][]. Raylib is not *required* however, and can be disabled by disabling the `raylib` feature flag in your `Cargo.toml` file.
 
 See the examples directory for usage examples converted 1:1 from the original C implementation of Physac.
 
