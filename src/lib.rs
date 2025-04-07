@@ -46,12 +46,11 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //!
 //! # Example
 //!
-//! ```
-//! # #[cfg(feature = "raylib")]
+#![cfg_attr(feature = "raylib", doc = " ```")]
+#![cfg_attr(not(feature = "raylib"), doc = " ```ignore")]
 //! use raylib::prelude::*;
 //! use physac::prelude::*;
 //!
-//! # #[cfg(feature = "raylib")]
 //! fn main() {
 //!     let (mut rl, thread) = raylib::init()
 //!         .size(640, 480)
