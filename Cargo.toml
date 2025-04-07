@@ -11,7 +11,7 @@ license-file = "./LICENSE.md"
 keywords = ["physics", "simulation", "2d", "threading", "physac"]
 
 [dependencies]
-raylib = { version = "*", optional = true }
+raylib = { version = ">=1.0", optional = true }
 
 [features]
 default = ["phys_thread"]
