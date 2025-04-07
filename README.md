@@ -14,7 +14,7 @@ While this library tries to mirror the C API, some changes have been made in ord
 </tr>
 </table>
 
-- Resources are automatically cleaned up when they go out of scope (or when [`std::mem::drop`][drop] is caled). This means that `ClosePhysics` is not exposed and not necessary.
+- Resources are automatically cleaned up when they go out of scope (or when [`std::mem::drop`][drop] is called). This means that `ClosePhysics` is not exposed and not necessary.
 
   `destroy_physics_body()` is still required for unloading physics bodies though, because the `create` methods store "strong" references (either [`std::sync::Arc`][Arc] if the `sync` feature flag is enabled or [`std::rc::Rc`][Rc] if not) inside of `Physac` and only return a reference *to those* references.
 
