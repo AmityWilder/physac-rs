@@ -153,6 +153,58 @@ If you are borrowing a physics body for longer than a frame, there's a high like
 It is perfectly reasonable to borrow `Physac` and/or one or multiple `PhysicBody`s for the full duration of a function--as long as the borrow(s) are given up during the same frame. \
 **You *should not* store `Read/WriteGuard`s in variables that will persist across multiple frames.**
 
+## Debugging Tips
+
+If your program is encountering physics-related bugs, try disabling `sync` & `phys_thread` and call `run_physics_step()` on your main thread. That way, you can put a breakpoint on the main thread and step into the physics function to see where the problem is occurring.
+
+If this seems to magically solve the problem, the bug might have something to do with how the physics thread isn't synchronized with your mutations on physics bodies.
+If you have a lot of individual borrows of `Physac` and/or `PhysicsBodyData`s, try borrowing them for the entire duration of whatever operation you are performing and see if that fixes it.
+
+### Example
+
+Before
+```rs
+// because Physac is only borrowed long enough to do_thing(), the borrow will drop when it's finished
+// and the physics thread will be free to update simultaneously with the following lines.
+ph.borrow_mut().do_thing();
+if body1.borrow().some_condition() {
+    // the physics thread *may have* modified body1 in the split-second since some_condition was tested
+    body1.borrow_mut().modification1();
+    // the physics thread *may have* modified body1 in the split-second since modification_1() happened
+    body1.borrow_mut().modification2(); 
+}
+```
+After
+```rs
+ph.borrowed_mut(|ph| {
+    // borrowed_mut locks ph, blocking the physics thread, until this closure finishes.
+    ph.do_thing();
+    body1.borrow_mut(|body1| {
+        // even though the physics thread can't do anything while Physac is borrowed, other threads with access
+        // to your physics bodies may still try to borrow them. by borrowing them for the entire time you need
+        // uninterrupted access to them, you can ensure they won't be modified elsewhere.
+        if body1.some_condition() {
+            body1.modification1();
+            body1.modification2();
+        }
+    }); // borrow of body1 drops, so other threads are free to use it again.
+}); // borrow of ph drops, so the physics thread is free to update again.
+```
+After (using `borrow_mut()` instead of `borrowed_mut()`, so that you can still `return`--but be careful not to let borrows overstay their welcome!)
+```rs
+{
+    let mut ph = ph.borrow_mut();
+    ph.do_thing();
+    {
+        let mut body1 = body1.borrow_mut();
+        if body1.some_condition() {
+            body1.modification1();
+            body1.modification2();
+        }
+    }
+}
+```
+
 [Physac]: https://github.com/victorfisac/Physac
 [raylib-rs]: https://github.com/raylib-rs/raylib-rs
 [drop]: https://doc.rust-lang.org/std/mem/fn.drop.html
