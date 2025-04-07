@@ -10,7 +10,7 @@ edition = "2024"
 raylib = { version = "*", optional = true }
 
 [features]
-default = ["raylib", "phys_thread"]
+default = ["phys_thread"]
 raylib = ["dep:raylib"]
 sync = []
 phys_thread = ["sync"]
