@@ -164,9 +164,9 @@ If you have a lot of individual borrows of `Physac` and/or `PhysicsBodyData`s, t
 
 Before
 ```rs
+ph.borrow_mut().do_thing();
 // because Physac is only borrowed long enough to do_thing(), the borrow will drop when it's finished
 // and the physics thread will be free to update simultaneously with the following lines.
-ph.borrow_mut().do_thing();
 if body1.borrow().some_condition() {
     // the physics thread *may have* modified body1 in the split-second since some_condition was tested
     body1.borrow_mut().modification1();
@@ -194,6 +194,7 @@ After (using `borrow_mut()` instead of `borrowed_mut()`, so that you can still `
 ```rs
 {
     let mut ph = ph.borrow_mut();
+    // note that this does not necessarily guarantee ph is still borrowed after this line like borrowed_mut() would
     ph.do_thing();
     {
         let mut body1 = body1.borrow_mut();
