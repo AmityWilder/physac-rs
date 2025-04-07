@@ -119,7 +119,7 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //!
 //! ---
 //!
-//! If you want to "remember" a particular [`PhysicsBodyData`] across multiple frames (like if it the body *of* some object, or is part of a physics constraint), use a [`Strong<PhysicsBodyData>`] or [`Weak<PhysicsBodyData>`].
+//! If you want to "remember" a particular [`PhysicsBodyData`] across multiple frames (like if it's the body *of* some object, or is part of a physics constraint), use a [`Strong<PhysicsBodyData>`] or [`Weak<PhysicsBodyData>`].
 //!
 //! [`Strong`] and [`Weak`] references can be `clone()`'d to obtain duplicate references to the same physics body. The body they refer to can be temporarily accessed with `borrow()`, `borrow_mut()`, `borrowed()`, `borrowed_mut()`, `read()`, or `write()`.
 //!
@@ -135,16 +135,16 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //! ```
 //! See [`std::rc::Rc`] and [`std::sync::Arc`] for more information about this behavior.
 //!
-//! - [`Strong`]: Use a strong reference if the body *should not* end during the lifetime of the reference. Note that this does not *enforce* such behavior: holding onto a [`Strong`] reference after calling `destroy_physics_body` on the body it refers to does not *keep it* in [`Physac`], it only makes it so that you don't need to call [`Weak::upgrade()`] on it, and allows the body's information to stay alive after it has been removed from the simulation. \
+//! - [`Strong`]: Use a strong reference if the body *should not* end during the lifetime of the reference. Note that this does not *enforce* such behavior: holding onto a [`Strong`] reference after calling [`Physac::destroy_physics_body`] on the body it refers to does not *keep it* in [`Physac`], it only makes it so that you don't need to call [`Weak::upgrade()`] on it, and allows the body's information to stay alive after it has been removed from the simulation. \
 //!   Call [`Strong::downgrade()`] on a [`Strong`] reference to get a [`Weak`] reference to the same object.
 //!
 //! - [`Weak`]: Use a weak reference if it is *possible* for the body to be destroyed while the reference exists, and you want your code to be conditional on whether that has happened. \
-//!   Call [`Weak::upgrade()`] on a [`Weak`] reference to get a [`Strong`] reference to the same object, then let the `Strong` reference go out of scope when you are done accessing it. \
+//!   Call [`Weak::upgrade()`] on a [`Weak`] reference to get a [`Strong`] reference to the same object, then let the [`Strong`] reference go out of scope when you are done accessing it. \
 //!   See [`std::rc::Weak`] and [`std::sync::Weak`] for more information about this behavior.
 //!
 //! ---
 //!
-//! **Important:** Remember not to **borrow** physics bodies, nor [`Physac`], across multiple frames. Storing `Strong` and [`Weak`] references across frames is fine, just not `Read/WriteGuard`s.
+//! **Important:** Remember not to **borrow** physics bodies, nor [`Physac`], across multiple frames. Storing [`Strong`] and [`Weak`] references across frames is fine, just not `Read/WriteGuard`s.
 //!
 //! When the physics thread needs to borrow a physics body, it will block (wait its turn) until no thread is borrowing it exclusively. The physics thread will mutably borrow *every* physics body being simulated at multiple points during each physics step.
 //!
@@ -168,9 +168,11 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //! // because Physac is only borrowed long enough to do_thing(), the borrow will drop when it's finished
 //! // and the physics thread will be free to update simultaneously with the following lines.
 //! if some_condition(&*body1.borrow()) {
-//!     // the physics thread *may have* modified body1 in the split-second since some_condition was tested
+//!     // the physics thread *may have* modified body1 in the split-second
+//!     // since some_condition was tested
 //!     modification1(&mut *body1.borrow_mut());
-//!     // the physics thread *may have* modified body1 in the split-second since modification1() occurred
+//!     // the physics thread *may have* modified body1 in the split-second
+//!     // since modification1() occurred
 //!     modification2(&mut *body1.borrow_mut());
 //! }
 //! ```
@@ -180,9 +182,10 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //!     // borrowed_mut locks ph, blocking the physics thread, until this closure finishes.
 //!     do_thing(ph);
 //!     body1.borrow_mut(|body1| {
-//!         // even though the physics thread can't do anything while Physac is borrowed, other threads with access
-//!         // to your physics bodies may still try to borrow them. by borrowing them for the entire time you need
-//!         // uninterrupted access to them, you can ensure they won't be modified elsewhere.
+//!         // even though the physics thread can't do anything while Physac is borrowed,
+//!         // other threads with access to your physics bodies may still try to borrow them.
+//!         // by borrowing them for the entire time you need uninterrupted access to them,
+//!         // you can ensure they won't be modified elsewhere.
 //!         if some_condition(body1) {
 //!             modification1(body1);
 //!             modification2(body1);
@@ -194,7 +197,8 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //! ```ignore
 //! {
 //!     let mut ph = ph.borrow_mut();
-//!     // note that this does not necessarily guarantee ph is still borrowed after this line like borrowed_mut() would
+//!     // note that this does not necessarily guarantee ph is still borrowed after this line
+//!     // like borrowed_mut() would
 //!     do_thing(ph);
 //!     {
 //!         let mut body1 = body1.borrow_mut();
