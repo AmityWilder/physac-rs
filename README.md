@@ -170,7 +170,7 @@ ph.borrow_mut().do_thing();
 if body1.borrow().some_condition() {
     // the physics thread *may have* modified body1 in the split-second since some_condition was tested
     body1.borrow_mut().modification1();
-    // the physics thread *may have* modified body1 in the split-second since modification_1() happened
+    // the physics thread *may have* modified body1 in the split-second since modification1() occurred
     body1.borrow_mut().modification2(); 
 }
 ```
