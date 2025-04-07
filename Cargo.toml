@@ -5,6 +5,10 @@ members = ["examples/*"]
 name = "physac"
 version = "0.1.0"
 edition = "2024"
+description = "Physac translated into native Rust"
+readme = "./README.md"
+license-file = "./LICENSE.md"
+keywords = ["physics", "simulation", "2d", "threading", "physac"]
 
 [dependencies]
 raylib = { version = "*", optional = true }
