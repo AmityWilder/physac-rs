@@ -167,13 +167,13 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //! do_thing(&mut *ph.borrow_mut());
 //! // because Physac is only borrowed long enough to do_thing(), the borrow will drop when it's finished
 //! // and the physics thread will be free to update simultaneously with the following lines.
-//! if some_condition(&*body1.borrow()) {
-//!     // the physics thread *may have* modified body1 in the split-second
+//! if some_condition(&*body.borrow()) {
+//!     // the physics thread *may have* modified body in the split-second
 //!     // since some_condition was tested
-//!     modification1(&mut *body1.borrow_mut());
-//!     // the physics thread *may have* modified body1 in the split-second
+//!     modification1(&mut *body.borrow_mut());
+//!     // the physics thread *may have* modified body in the split-second
 //!     // since modification1() occurred
-//!     modification2(&mut *body1.borrow_mut());
+//!     modification2(&mut *body.borrow_mut());
 //! }
 //! ```
 //! **After**
@@ -181,16 +181,16 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //! ph.borrowed_mut(|ph| {
 //!     // borrowed_mut locks ph, blocking the physics thread, until this closure finishes.
 //!     do_thing(ph);
-//!     body1.borrow_mut(|body1| {
+//!     body.borrow_mut(|body| {
 //!         // even though the physics thread can't do anything while Physac is borrowed,
 //!         // other threads with access to your physics bodies may still try to borrow them.
 //!         // by borrowing them for the entire time you need uninterrupted access to them,
 //!         // you can ensure they won't be modified elsewhere.
-//!         if some_condition(body1) {
-//!             modification1(body1);
-//!             modification2(body1);
+//!         if some_condition(body) {
+//!             modification1(body);
+//!             modification2(body);
 //!         }
-//!     }); // borrow of body1 drops, so other threads are free to use it again.
+//!     }); // borrow of body drops, so other threads are free to use it again.
 //! }); // borrow of ph drops, so the physics thread is free to update again.
 //! ```
 //! **After** (using `borrow_mut()` instead of `borrowed_mut()`, so that you can still `return`--but be careful not to let borrows overstay their welcome!)
@@ -201,10 +201,10 @@ physac-rs is a conversion of Physac into the Rust programming language. Amy Wild
 //!     // like borrowed_mut() would
 //!     do_thing(ph);
 //!     {
-//!         let mut body1 = body1.borrow_mut();
-//!         if some_condition(body1) {
-//!             modification1(body1);
-//!             modification2(body1);
+//!         let mut body = body.borrow_mut();
+//!         if some_condition(body) {
+//!             modification1(body);
+//!             modification2(body);
 //!         }
 //!     }
 //! }
